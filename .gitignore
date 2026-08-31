@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+build/
+dist/
+installer/
+*.log
+.DS_Store
+venv/
+.env
+config.json
+state.json
+*.exe
