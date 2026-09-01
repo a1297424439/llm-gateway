@@ -182,7 +182,7 @@ const VIEWS = {
         <div><div class="card-title">${t("sponsor_title")}</div><div class="card-sub">${t("sponsor_sub")}</div></div>
       </div>
       <div class="card-pad" style="padding-top:0;text-align:center">
-        <div style="font-size:40px;opacity:.5">☕</div>
+        <img src="/sponsor-qr.png" alt="Sponsor QR" style="width:140px;height:140px;border-radius:12px">
         <div class="hint" style="margin-top:8px">${t("sponsor_qr_hint")}</div>
         <div style="margin-top:12px;display:flex;gap:8px;justify-content:center">
           <button class="btn btn-sm btn-plain" data-act="sponsor-copy" data-copy="your-payment-link-here">${t("sponsor_copy")}</button>
