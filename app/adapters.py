@@ -119,11 +119,24 @@ def raise_for_status(status: int, text: str, headers: Optional[httpx.Headers] = 
 
 # ---------------------------------------------------------------- 请求构造
 
+def _clean_empty_tool_calls(messages) -> list:
+    """剔除 tool_calls 为空数组的字段：部分严格上游（DeepSeek 官方、支付宝百炼等）
+    会因 "Empty tool_calls is not supported" 直接 400 拒绝整个请求。"""
+    out = []
+    for m in messages:
+        if isinstance(m, dict) and isinstance(m.get("tool_calls"), list) and not m["tool_calls"]:
+            m = {k: v for k, v in m.items() if k != "tool_calls"}
+        out.append(m)
+    return out
+
+
 def build_payload(p: dict, body: dict, upstream_model: str) -> dict:
     if p.get("adapter") == "anthropic":
         return build_anthropic_payload(body, upstream_model)
     payload = dict(body)
     payload["model"] = upstream_model
+    if isinstance(payload.get("messages"), list):
+        payload["messages"] = _clean_empty_tool_calls(payload["messages"])
     return payload
 
 

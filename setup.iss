@@ -1,5 +1,5 @@
 #define MyAppName "LLM Gateway"
-#define MyAppVersion "1.0.6"
+#define MyAppVersion "1.0.15"
 #define MyAppPublisher "DaFeiPower"
 #define MyAppExeName "llm-gateway.exe"
 
@@ -24,14 +24,15 @@ CloseApplications=yes
 RestartApplications=no
 
 [Languages]
-Name: "english"; MessagesFile: "Default.isl"
+Name: "chinesesimplified"; MessagesFile: "C:\Program\Languages\ChineseSimplified.isl"
+Name: "english"; MessagesFile: "C:\Program\Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 Name: "autostart"; Description: "Auto start on boot"; GroupDescription: "Other options:"; Flags: unchecked
 
 [Files]
-Source: "dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "C:\Users\Administrator\.zcode\workspace\default\llm-gateway\dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

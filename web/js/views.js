@@ -17,74 +17,74 @@ const VIEWS = {
 
     return `
     <div class="banner fade-in" style="margin-bottom:16px">
-      <div class="banner-inner" style="background:var(--orange-soft);color:var(--orange)"><span>${t("banner_data")}</span></div>
+      <div class="banner-inner" style="background:var(--orange-soft);color:var(--orange)"><span>数据无价：重要项目请使用安全路由（信任路由），仅经你标记为「可信」的渠道转发</span></div>
     </div>
 
     <div class="promo-banner fade-in">
       <div class="promo-inner">
         <span class="promo-icon">🔗</span>
         <div class="promo-text">
-          <div class="promo-title">${t("promo_title")}</div>
-          <div class="promo-desc">${t("promo_desc")}</div>
+          <div class="promo-title">找更多中转站？</div>
+          <div class="promo-desc">LLM Nav 收录优质 API 中转站，持续更新</div>
         </div>
-        <button class="btn btn-sm promo-btn" data-act="open-promo">${t("promo_go")}</button>
+        <button class="btn btn-sm promo-btn" data-act="open-promo">去看看</button>
       </div>
     </div>
 
-    <div class="view-title fade-in">${t("view_title_dash")}</div>
+    <div class="view-title fade-in">概览</div>
     <div class="card fade-in">
       <div class="row">
         <div class="row-main">
           <div class="label" style="display:flex;align-items:center;gap:8px">
             <span style="width:9px;height:9px;border-radius:50%;background:var(--green);box-shadow:0 0 0 3px var(--green-soft)"></span>
-            ${t("running")}
+            服务运行中
           </div>
-          <div class="desc">${t("uptime")} <span id="uptimeText">${up}</span></div>
+          <div class="desc">已运行 <span id="uptimeText">${up}</span></div>
         </div>
         <div class="segmented" style="min-width:220px">
-          <button class="seg-btn ${c.mode !== "safe" ? "active" : ""}" data-act="mode-seg" data-mode="smart">${t("mode_smart")}</button>
-          <button class="seg-btn ${c.mode === "safe" ? "active" : ""}" data-act="mode-seg" data-mode="safe">${t("mode_safe")}</button>
+          <button class="seg-btn ${c.mode !== "safe" ? "active" : ""}" data-act="mode-seg" data-mode="smart">智能路由</button>
+          <button class="seg-btn ${c.mode === "safe" ? "active" : ""}" data-act="mode-seg" data-mode="safe">安全路由</button>
         </div>
       </div>
       <div class="row"><div class="desc">${modeDesc(c.mode)}</div></div>
       <div class="row">
-        <div class="row-main"><div class="label">${t("endpoint_openai")}</div><div class="desc">${t("endpoint_openai_desc")}</div></div>
+        <div class="row-main"><div class="label">接口地址 — OpenAI 兼容</div><div class="desc">Cherry Studio / LobeChat / OpenWebUI 等绝大多数客户端</div></div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
           <span class="url-pill"><span>${esc(url)}</span></span>
           ${d.urls.length > 1 ? `<span class="url-pill"><span>${esc(d.urls[1].url)}</span></span>` : ""}
-          <button class="btn btn-sm btn-plain" data-act="copy" data-copy="${esc(url)}">${t("common_copy")}</button>
+          <button class="btn btn-sm btn-plain" data-act="copy" data-copy="${esc(url)}">复制</button>
         </div>
       </div>
       <div class="row">
-        <div class="row-main"><div class="label">${t("endpoint_anth")}</div><div class="desc">${t("endpoint_anth_desc")}</div></div>
+        <div class="row-main"><div class="label">接口地址 — Anthropic 兼容</div><div class="desc">Claude Code / Claude 方言客户端（地址不带 /v1）</div></div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
           <span class="url-pill"><span>${esc(anthUrl)}</span></span>
           ${d.urls.length > 1 ? `<span class="url-pill"><span>${esc(anthUrlLan)}</span></span>` : ""}
-          <button class="btn btn-sm btn-plain" data-act="copy" data-copy="${esc(anthUrl)}">${t("common_copy")}</button>
+          <button class="btn btn-sm btn-plain" data-act="copy" data-copy="${esc(anthUrl)}">复制</button>
         </div>
       </div>
       <div class="row">
         <div class="row-main">
-          <div class="label">${t("api_key_label")}</div>
+          <div class="label">API Key</div>
           <div class="desc key-mask" id="keyText">${S.keyVisible ? esc(key) : esc(maskKey(key))}</div>
         </div>
         <div class="btn-row">
-          <button class="btn btn-sm btn-plain" data-act="key-toggle">${S.keyVisible ? t("common_hide") : t("common_show")}</button>
-          <button class="btn btn-sm btn-plain" data-act="copy" data-copy="${esc(key)}">${t("common_copy")}</button>
-          <button class="btn btn-sm btn-danger" data-act="key-regen">${t("server_regen_key")}</button>
+          <button class="btn btn-sm btn-plain" data-act="key-toggle">${S.keyVisible ? "隐藏" : "显示"}</button>
+          <button class="btn btn-sm btn-plain" data-act="copy" data-copy="${esc(key)}">复制</button>
+          <button class="btn btn-sm btn-danger" data-act="key-regen">重新生成</button>
         </div>
       </div>
       <div class="row">
         <div class="row-main">
-          <div class="label">${t("sched_model_name")}</div>
-          <div class="desc">${t("sched_model_desc")}</div>
+          <div class="label">调度模型名</div>
+          <div class="desc">在智能体（Agent）中填写的模型名称</div>
         </div>
         <span class="url-pill" style="flex:none"><span>auto</span></span>
       </div>
     </div>
 
     <div class="card fade-in">
-      <div class="card-header"><div><div class="card-title">${t("sched_overview")}</div><div class="card-sub">${t("sched_overview_sub")}${c.mode === "safe" ? t("sched_safe_sub") : ""}</div></div></div>
+      <div class="card-header"><div><div class="card-title">调度概览</div><div class="card-sub">每行一个渠道 · 上方优先调度 · 失败进入冷却池后自动降级${c.mode === "safe" ? "（安全路由：仅可信渠道）" : ""}</div></div></div>
       ${schedP.length ? schedP.map((p, i) => `
         <div class="cd-row">
           <span class="wl-order t${tierOf(p)}">${i + 1}</span>
@@ -95,34 +95,34 @@ const VIEWS = {
             </div>
           </div>
         </div>`).join("")
-        : `<div class="empty">${c.mode === "safe" ? t("sched_empty_safe") : t("sched_empty_none")}</div>`}
+        : `<div class="empty">${c.mode === "safe" ? "安全路由下暂无可用渠道（请启用「可信」渠道并勾选模型）" : "尚未勾选任何模型 — 前往「渠道」页点击模型标签加入调度"}</div>`}
     </div>
 
     <div class="stats-grid fade-in">
-      <div class="stat-card"><div class="stat-num" id="st-total">${st.total ?? 0}</div><div class="stat-label">${t("stat_total")}</div></div>
-      <div class="stat-card"><div class="stat-num" id="st-rate">${st.success_rate ?? 100}%</div><div class="stat-label">${t("stat_rate")}</div></div>
-      <div class="stat-card"><div class="stat-num" id="st-cool" style="color:${cds.length ? "var(--orange)" : "inherit"}">${cds.length}</div><div class="stat-label">${t("stat_cool")}</div></div>
-      <div class="stat-card"><div class="stat-num" id="st-prov">${enabledN}</div><div class="stat-label">${t("stat_enabled")}</div></div>
+      <div class="stat-card"><div class="stat-num" id="st-total">${st.total ?? 0}</div><div class="stat-label">总请求（近期）</div></div>
+      <div class="stat-card"><div class="stat-num" id="st-rate">${st.success_rate ?? 100}%</div><div class="stat-label">成功率</div></div>
+      <div class="stat-card"><div class="stat-num" id="st-cool" style="color:${cds.length ? "var(--orange)" : "inherit"}">${cds.length}</div><div class="stat-label">冷却中渠道·模型</div></div>
+      <div class="stat-card"><div class="stat-num" id="st-prov">${enabledN}</div><div class="stat-label">启用渠道</div></div>
     </div>
 
     <div class="card fade-in">
       <div class="card-header">
-        <div><div class="card-title">${t("cd_pool")}</div><div class="card-sub">${t("cd_pool_sub")}</div></div>
-        <span id="cdClearBtn">${cds.length ? `<button class="btn btn-sm btn-plain" data-act="cd-clear">${t("cd_clear_all")}</button>` : ""}</span>
+        <div><div class="card-title">冷却池</div><div class="card-sub">失败模型按指数退避冷却，到期后半开重试</div></div>
+        <span id="cdClearBtn">${cds.length ? '<button class="btn btn-sm btn-plain" data-act="cd-clear">全部恢复</button>' : ""}</span>
       </div>
       <div id="cdList">${cdListHtml(cds)}</div>
     </div>
 
     <div class="card fade-in">
-      <div class="card-header"><div><div class="card-title">${t("example_title")}</div><div class="card-sub">${t("example_sub")}</div></div></div>
+      <div class="card-header"><div><div class="card-title">接入示例</div><div class="card-sub">任意 OpenAI 兼容客户端（Cherry Studio / LobeChat / OpenWebUI / Hermes…）</div></div></div>
       <div class="card-pad" style="padding-top:0">
-        <div class="row" style="border:none;padding:0 0 10px"><span class="badge badge-gray">${t("endpoint_model")}</span><span class="mono">${esc(url)}</span></div>
-        <div class="row" style="border:none;padding:0 0 12px"><span class="badge badge-gray">${t("api_key_label")}</span><span class="mono">${esc(maskKey(key))}</span></div>
-        <div class="row" style="border:none;padding:0 0 12px"><span class="badge badge-gray">${t("model_name_badge")}</span><span class="mono">${esc(demoModel)}</span> <span class="hint">${t("endpoint_model_note")}</span></div>
+        <div class="row" style="border:none;padding:0 0 10px"><span class="badge badge-gray">API 地址</span><span class="mono">${esc(url)}</span></div>
+        <div class="row" style="border:none;padding:0 0 12px"><span class="badge badge-gray">API Key</span><span class="mono">${esc(maskKey(key))}</span></div>
+        <div class="row" style="border:none;padding:0 0 12px"><span class="badge badge-gray">模型名</span><span class="mono">${esc(demoModel)}</span> <span class="hint">（勾选的模型名任填一个）</span></div>
         <div class="code" id="curlBlock">${esc(buildCurl(url, key, demoModel))}</div>
         <div style="margin-top:10px;display:flex;gap:8px">
-          <button class="btn btn-sm btn-plain" data-act="copy" data-copy="${esc(buildCurl(url, key, demoModel))}">${t("example_copy")}</button>
-          <button class="btn btn-sm btn-plain" data-act="nav" data-view="providers">${t("example_select")}</button>
+          <button class="btn btn-sm btn-plain" data-act="copy" data-copy="${esc(buildCurl(url, key, demoModel))}">复制示例</button>
+          <button class="btn btn-sm btn-plain" data-act="nav" data-view="providers">去勾选模型</button>
         </div>
       </div>
     </div>`;
@@ -133,151 +133,146 @@ const VIEWS = {
     const sorted = [...(c.providers || [])].sort((a, b) =>
       (a.priority || 99) - (b.priority || 99) || String(a.name || "").localeCompare(String(b.name || "")));
     const safeHint = c.mode === "safe"
-      ? `<div class="banner"><div class="banner-inner" style="background:var(--green-soft);color:var(--green)"><span>${t("safe_banner")}</span></div></div>` : "";
+      ? `<div class="banner"><div class="banner-inner" style="background:var(--green-soft);color:var(--green)"><span>安全路由已开启：仅你标记为「可信」的渠道参与调度</span></div></div>` : "";
     const tiers = [
-      { name: t("tier1_name"), desc: t("tier1_desc"), range: t("tier1_range"), empty: t("tier1_empty") },
-      { name: t("tier2_name"), desc: t("tier2_desc"), range: t("tier2_range"), empty: t("tier2_empty") },
-      { name: t("tier3_name"), desc: t("tier3_desc"), range: t("tier3_range"), empty: t("tier3_empty") },
+      { name: "一档 · 优先调度", desc: "最上面的最先调度；免费/公益放这里", range: "优先级 1~9", empty: "把渠道卡片拖到这里即可进入一档" },
+      { name: "二档 · 稳定承接", desc: "一档全部冷却时由这一档顶上", range: "优先级 10~19", empty: "把渠道卡片拖到这里即可进入二档" },
+      { name: "三档 · 官方兜底", desc: "最后防线，保证始终有可用出口", range: "优先级 20+", empty: "把渠道卡片拖到这里即可进入三档" },
     ];
-    const sections = tiers.map((tier, ti) => {
+    const sections = tiers.map((t, ti) => {
       const ps = sorted.filter(p => tierOf(p) === ti);
       const models = ps.reduce((n, p) => n + (p.enabled ? (p.sched_models || []).length : 0), 0);
       const collapsed = S.collapsedTiers.includes(ti);
       return `
-      <div class="tier-section ${tier.cls || ''}" data-tier="${ti}">
-        <button class="tier-head" data-act="tier-collapse" data-ti="${ti}" title="${collapsed ? t("common_expand") : t("common_collapse")}">
+      <div class="tier-section ${t.cls || ''}" data-tier="${ti}">
+        <button class="tier-head" data-act="tier-collapse" data-ti="${ti}" title="${collapsed ? "展开" : "折叠"}">
           <span class="chev">${collapsed ? "▸" : "▾"}</span>
-          <span>${tier.name}</span>
-          ${collapsed ? "" : `<span class="sub">${tier.desc}</span>`}
-          <span class="sub" style="margin-left:auto;white-space:nowrap">${tier.range} · ${ps.length} ${t("tier_channel")} · ${models} ${t("tier_model")}</span>
+          <span>${t.name}</span>
+          ${collapsed ? "" : `<span class="sub">${t.desc}</span>`}
+          <span class="sub" style="margin-left:auto;white-space:nowrap">${t.range} · ${ps.length} 渠道 · ${models} 模型</span>
         </button>
         ${collapsed ? "" : (ps.length ? ps.map(p => providerCard(p, ti)).join("")
-          : `<div class="tier-empty">${tier.empty}</div>`)}
+          : `<div class="tier-empty">${t.empty}</div>`)}
       </div>`;
     }).join("");
     return `
-    <div class="view-title fade-in">${t("view_title_prov")}
-      <button class="btn btn-primary" data-act="provider-add">${t("p_add_btn")}</button>
+    <div class="view-title fade-in">渠道
+      <button class="btn btn-primary" data-act="provider-add">＋ 添加渠道</button>
     </div>
     ${safeHint}
     <div class="card card-pad fade-in hint" style="margin-bottom:14px">
-      ${t("prov_drag_hint")}
+      <b>拖拽渠道卡片</b>调整调度顺序：<b>越靠上越优先</b>，拖入对应档位即可自动归类。
+      点击模型标签勾选参与调度（高亮 ✓），<b>勾选后拖拽标签</b>可调整该渠道内的调度顺序；
+      失败自动进入冷却池并降级到下一档；同名模型多渠道勾选即自动互备。
     </div>
     <div class="card fade-in" style="margin-bottom:14px">
       <div class="row">
-        <div class="row-main"><div class="desc">${t("prov_chip_hint")}</div></div>
+        <div class="row-main"><div class="desc">点击模型标签勾选参与调度；标签上的 K 数 = 上下文长度（~ 为家族推测，? 为未知）。勾选后拖拽标签可调顺序。</div></div>
       </div>
     </div>
-    ${sorted.length ? sections : `<div class="card fade-in"><div class="empty"><div class="big">${t("prov_empty_big")}</div>${t("prov_empty_hint")}</div></div>`}`;
+    ${sorted.length ? sections : `<div class="card fade-in"><div class="empty"><div class="big">暂无渠道</div>点击右上角「添加渠道」，可从预设一键填充 DeepSeek、智谱、Kimi 等</div></div>`}`;
   },
 
   settings() {
     const c = cfg();
     const r = c.routing || {}, cd = c.cooldown || {}, sv = c.server || {};
     return `
-    <div class="view-title fade-in">${t("view_title_settings")}</div>
+    <div class="view-title fade-in">设置</div>
 
     <div class="card fade-in sponsor-card">
       <div class="card-header">
-        <div><div class="card-title">${t("sponsor_title")}</div><div class="card-sub">${t("sponsor_sub")}</div></div>
+        <div><div class="card-title">支持这个项目</div><div class="card-sub">如果调度中枢对你有帮助，欢迎请作者喝杯咖啡</div></div>
       </div>
       <div class="card-pad" style="padding-top:0;text-align:center">
         <img src="/sponsor-qr.png" alt="Sponsor QR" style="width:140px;height:140px;border-radius:12px">
-        <div class="hint" style="margin-top:8px">${t("sponsor_qr_hint")}</div>
+        <div class="hint" style="margin-top:8px">感谢义父义母赞助，作者跪谢 🙏</div>
         <div style="margin-top:12px;display:flex;gap:8px;justify-content:center">
-          <button class="btn btn-sm btn-plain" data-act="sponsor-copy" data-copy="your-payment-link-here">${t("sponsor_copy")}</button>
-          <button class="btn btn-sm btn-plain" data-act="sponsor-open">${t("sponsor_open")}</button>
+          <button class="btn btn-sm btn-plain" data-act="sponsor-copy" data-copy="your-payment-link-here">复制赞助链接</button>
+          <button class="btn btn-sm btn-plain" data-act="sponsor-open">打开赞助页</button>
         </div>
       </div>
     </div>
 
     <div class="card fade-in">
-      <div class="card-header"><div><div class="card-title">${t("routing_params")}</div><div class="card-sub">${t("routing_params_sub")}</div></div></div>
+      <div class="card-header"><div><div class="card-title">调度参数</div><div class="card-sub">调度模式在「概览」页顶部切换</div></div></div>
       <div class="row">
-        <div class="row-main"><div class="label">${t("max_attempts")}</div><div class="desc">${t("max_attempts_desc")}</div></div>
+        <div class="row-main"><div class="label">最大尝试次数</div><div class="desc">单次请求最多尝试的候选渠道数量</div></div>
         <input type="number" min="1" max="10" value="${r.max_attempts ?? 4}" data-change="settings-num" data-sect="routing" data-field="max_attempts">
       </div>
       <div class="row">
-        <div class="row-main"><div class="label">${t("upstream_timeout")}</div><div class="desc">${t("upstream_timeout_desc")}</div></div>
+        <div class="row-main"><div class="label">上游超时（秒）</div><div class="desc">连接与流式读取的超时时间</div></div>
         <input type="number" min="10" max="600" value="${r.timeout_seconds ?? 120}" data-change="settings-num" data-sect="routing" data-field="timeout_seconds">
       </div>
     </div>
 
     <div class="card fade-in">
-      <div class="card-header"><div><div class="card-title">${t("cd_pool")}</div><div class="card-sub">${t("cd_pool_params_sub")}</div></div></div>
+      <div class="card-header"><div><div class="card-title">冷却池</div><div class="card-sub">模型级：失败按 base × 2ⁿ 退避，封顶 max；渠道级：额度类错误触发，5 小时起步封顶 7 天</div></div></div>
       <div class="row">
-        <div class="row-main"><div class="label">${t("cd_base")}</div></div>
+        <div class="row-main"><div class="label">基础冷却（秒）</div></div>
         <input type="number" min="5" max="3600" value="${cd.base_seconds ?? 60}" data-change="settings-num" data-sect="cooldown" data-field="base_seconds">
       </div>
       <div class="row">
-        <div class="row-main"><div class="label">${t("cd_max")}</div></div>
+        <div class="row-main"><div class="label">最大冷却（秒）</div></div>
         <input type="number" min="30" max="86400" value="${cd.max_seconds ?? 1800}" data-change="settings-num" data-sect="cooldown" data-field="max_seconds">
       </div>
       <div class="row">
-        <div class="row-main"><div class="label">${t("cd_provider_base")}</div><div class="desc">${t("cd_provider_base_desc")}</div></div>
+        <div class="row-main"><div class="label">渠道冷却基础（秒）</div><div class="desc">额度类错误（402、余额不足等）触发，整个渠道被跳过：18000 = 5 小时</div></div>
         <input type="number" min="300" max="604800" value="${cd.provider_base_seconds ?? 18000}" data-change="settings-num" data-sect="cooldown" data-field="provider_base_seconds">
       </div>
       <div class="row">
-        <div class="row-main"><div class="label">${t("cd_provider_max")}</div><div class="desc">${t("cd_provider_max_desc")}</div></div>
+        <div class="row-main"><div class="label">渠道冷却最大（秒）</div><div class="desc">604800 = 7 天；渠道内任一请求成功即自动解除渠道冷却</div></div>
         <input type="number" min="600" max="1209600" value="${cd.provider_max_seconds ?? 604800}" data-change="settings-num" data-sect="cooldown" data-field="provider_max_seconds">
       </div>
     </div>
 
     <div class="card fade-in">
-      <div class="card-header"><div><div class="card-title">${t("server_card")}</div><div class="card-sub">${t("config_path_label")}：${esc(S.data.config_path)}</div></div></div>
+      <div class="card-header"><div><div class="card-title">服务器</div><div class="card-sub">配置文件：${esc(S.data.config_path)}</div></div></div>
       <div class="row">
-        <div class="row-main"><div class="label">${t("server_scope")}</div><div class="desc">${sv.host === "0.0.0.0" ? t("server_lan", { ip: esc(S.data.lan_ip || "") }) : t("server_local")}</div></div>
+        <div class="row-main"><div class="label">监听范围</div><div class="desc">${sv.host === "0.0.0.0" ? "局域网可访问（" + esc(S.data.lan_ip || "") + "）" : "仅本机 127.0.0.1 可访问"}</div></div>
         <div class="segmented" style="max-width:260px">
-          <button class="seg-btn ${sv.host !== "0.0.0.0" ? "active" : ""}" data-act="host-seg" data-host="127.0.0.1">${t("server_local_only")}</button>
-          <button class="seg-btn ${sv.host === "0.0.0.0" ? "active" : ""}" data-act="host-seg" data-host="0.0.0.0">${t("server_lan_only")}</button>
+          <button class="seg-btn ${sv.host !== "0.0.0.0" ? "active" : ""}" data-act="host-seg" data-host="127.0.0.1">仅本机</button>
+          <button class="seg-btn ${sv.host === "0.0.0.0" ? "active" : ""}" data-act="host-seg" data-host="0.0.0.0">局域网</button>
         </div>
       </div>
       <div class="row">
-        <div class="row-main"><div class="label">${t("server_port")}</div><div class="desc">${t("server_port_desc")}</div></div>
+        <div class="row-main"><div class="label">端口</div><div class="desc">默认随机生成并固定保存；可手动修改（1–65535），改完需重启生效</div></div>
         <div class="btn-row">
-          <input type="number" min="1" max="65535" value="${sv.port ?? ""}" style="width:100px;text-align:center" data-change="settings-port" placeholder="${t("server_port_ph")}">
-          <button class="btn btn-sm btn-plain" data-act="port-regen">${t("server_port_random")}</button>
+          <input type="number" min="1" max="65535" value="${sv.port ?? ""}" style="width:100px;text-align:center" data-change="settings-port" placeholder="端口">
+          <button class="btn btn-sm btn-plain" data-act="port-regen">随机</button>
         </div>
       </div>
       <div class="row">
-        <div class="row-main"><div class="label">${t("api_key_label")}</div><div class="desc key-mask">${esc(maskKey(sv.key || ""))}${t("server_key_desc")}</div></div>
-        <button class="btn btn-sm btn-danger" data-act="key-regen">${t("server_regen_key")}</button>
+        <div class="row-main"><div class="label">API Key</div><div class="desc key-mask">${esc(maskKey(sv.key || ""))}（首次生成后固定，重启不变）</div></div>
+        <button class="btn btn-sm btn-danger" data-act="key-regen">重新生成</button>
       </div>
       <div class="row">
-        <div class="row-main"><div class="label">${t("server_close")}</div><div class="desc">${t("server_close_desc")}</div></div>
+        <div class="row-main"><div class="label">点 ✕ 时</div><div class="desc">关闭窗口按钮的行为（Hermes 等客户端只有在程序运行时才能连接）</div></div>
         <div class="segmented" style="max-width:330px">
-          ${[["", t("close_ask")], ["hide", t("close_hide_tray")], ["quit", t("close_quit_app")]].map(([v, label]) =>
-            `<button class="seg-btn ${(c.server.close_action || "") === v ? "active" : ""}" data-act="close-seg" data-v="${v}">${label}</button>`).join("")}
+          ${[["", "每次询问"], ["hide", "隐藏到托盘"], ["quit", "退出程序"]].map(([v, t]) =>
+            `<button class="seg-btn ${(c.server.close_action || "") === v ? "active" : ""}" data-act="close-seg" data-v="${v}">${t}</button>`).join("")}
         </div>
       </div>
       <div class="row">
-        <div class="row-main"><div class="label">${t("autostart")}</div><div class="desc">${t("autostart_desc")}</div></div>
+        <div class="row-main"><div class="label">开机自启</div><div class="desc">登录系统后自动在后台启动网关（无界面模式，地址与 Key 不变）</div></div>
         <label class="switch"><input type="checkbox" data-change="autostart" ${S.autostart ? "checked" : ""}><span class="knob"></span></label>
       </div>
     </div>
 
     <div class="card fade-in">
-      <div class="card-header"><div><div class="card-title">${t("appearance")}</div></div></div>
+      <div class="card-header"><div><div class="card-title">外观与数据</div></div></div>
       <div class="row">
-        <div class="row-main"><div class="label">${t("theme")}</div></div>
+        <div class="row-main"><div class="label">主题</div></div>
         <div class="segmented" style="max-width:240px">
-          <button class="seg-btn ${S.theme === "auto" ? "active" : ""}" data-act="theme-set" data-theme="auto">${t("theme_auto")}</button>
-          <button class="seg-btn ${S.theme === "light" ? "active" : ""}" data-act="theme-set" data-theme="light">${t("theme_light")}</button>
-          <button class="seg-btn ${S.theme === "dark" ? "active" : ""}" data-act="theme-set" data-theme="dark">${t("theme_dark")}</button>
+          <button class="seg-btn ${S.theme === "auto" ? "active" : ""}" data-act="theme-set" data-theme="auto">自动</button>
+          <button class="seg-btn ${S.theme === "light" ? "active" : ""}" data-act="theme-set" data-theme="light">浅色</button>
+          <button class="seg-btn ${S.theme === "dark" ? "active" : ""}" data-act="theme-set" data-theme="dark">深色</button>
         </div>
       </div>
       <div class="row">
-        <div class="row-main"><div class="label">${t("language")}</div></div>
-        <div class="segmented" style="max-width:240px">
-          <button class="seg-btn ${LANG === "zh" ? "active" : ""}" data-act="lang-set" data-lang="zh">${t("lang_zh")}</button>
-          <button class="seg-btn ${LANG === "en" ? "active" : ""}" data-act="lang-set" data-lang="en">${t("lang_en")}</button>
-        </div>
-      </div>
-      <div class="row">
-        <div class="row-main"><div class="label">${t("config_backup")}</div><div class="desc">${t("config_backup_desc")}</div></div>
+        <div class="row-main"><div class="label">配置备份</div><div class="desc">导出/导入全部渠道与设置（含密钥，注意保管）</div></div>
         <div class="btn-row">
-          <button class="btn btn-sm btn-plain" data-act="cfg-export">${t("common_export")}</button>
-          <button class="btn btn-sm btn-plain" data-act="cfg-import">${t("common_import")}</button>
+          <button class="btn btn-sm btn-plain" data-act="cfg-export">导出</button>
+          <button class="btn btn-sm btn-plain" data-act="cfg-import">导入</button>
           <input type="file" id="import-file" accept=".json" style="display:none">
         </div>
       </div>
@@ -286,15 +281,17 @@ const VIEWS = {
 
   logs() {
     return `
-    <div class="view-title fade-in">${t("view_title_logs")}
+    <div class="view-title fade-in">请求日志
       <div class="btn-row">
         <div class="segmented" style="max-width:240px">
-          ${["all", "ok", "fail"].map(f => `<button class="seg-btn ${S.logFilter === f ? "active" : ""}" data-act="log-filter" data-f="${f}">${{ all: t("log_filter_all"), ok: t("log_filter_ok"), fail: t("log_filter_fail") }[f]}</button>`).join("")}
+          ${["all", "ok", "fail"].map(f => `<button class="seg-btn ${S.logFilter === f ? "active" : ""}" data-act="log-filter" data-f="${f}">${{ all: "全部", ok: "成功", fail: "失败" }[f]}</button>`).join("")}
         </div>
-        <button class="btn btn-sm btn-plain" data-act="logs-clear">${t("common_clear")}</button>
-        <button class="btn btn-sm btn-plain" data-act="logs-export">${t("common_export")}</button>
+        <button class="btn btn-sm btn-plain" data-act="logs-clear">清空</button>
+        <button class="btn btn-sm btn-plain" data-act="logs-export">导出</button>
       </div>
     </div>
     <div class="card fade-in"><div id="logList">${logListHtml()}</div></div>`;
   },
 };
+
+

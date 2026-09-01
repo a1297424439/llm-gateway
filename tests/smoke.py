@@ -64,14 +64,14 @@ def main():
             "cooldown": {"base_seconds": 5, "max_seconds": 30},
             "providers": [
                 {"id": "p_bad", "name": "坏渠道", "base_url": "http://127.0.0.1:9302/v1",
-                 "api_key": "k", "adapter": "openai", "trusted": False, "enabled": True,
+                 "api_key": "k", "adapter": "openai", "domestic": False, "enabled": True,
                  "priority": 1, "note": "", "priority_note": "",
                  "fetched_models": ["mock-chat", "mock-embed", "secret-model"],
                  "sched_models": ["mock-chat", "mock-embed"],
                  "model_context": {"mock-chat": 1000000, "mock-embed": 1000000, "secret-model": 1000000},
                  "last_test": None},
                 {"id": "p_ok", "name": "好渠道", "base_url": "http://127.0.0.1:9301/v1",
-                 "api_key": "k", "adapter": "openai", "trusted": True, "enabled": True,
+                 "api_key": "k", "adapter": "openai", "domestic": True, "enabled": True,
                  "priority": 2, "note": "",
                  "fetched_models": ["mock-chat", "mock-embed"],
                  "sched_models": ["mock-chat", "mock-embed"],
@@ -157,9 +157,9 @@ def main():
         c.post("/api/settings", headers=gw_headers(), json={"mode": "safe"})
         r = c.post("/v1/chat/completions", headers=gw_headers(),
                    json={"model": "mock-chat", "messages": [{"role": "user", "content": "hi"}]})
-        check("安全模式下可信渠道可用", r.status_code == 200 and "mock-9301" in r.text[:400])
+        check("安全模式下国内渠道可用", r.status_code == 200 and "mock-9301" in r.text[:400])
         r = c.get("/v1/models", headers=gw_headers())
-        check("安全模式模型列表过滤（仅可信渠道勾选项）", r.status_code == 200 and
+        check("安全模式模型列表过滤（仅国内渠道勾选项）", r.status_code == 200 and
               set(m["id"] for m in r.json()["data"]) == {"auto", "mock-chat", "mock-embed"}, r.text[:200])
         c.post("/api/settings", headers=gw_headers(), json={"mode": "smart"})
 

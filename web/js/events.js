@@ -6,45 +6,43 @@ const ACTIONS = {
   copy(d) { copyText(d.copy); },
   "theme-cycle"() {
     S.theme = S.theme === "auto" ? "light" : S.theme === "light" ? "dark" : "auto";
-    applyTheme();
-    toast(t("theme_toast", { label: t({ auto: "theme_follow_system", light: "theme_light_label", dark: "theme_dark_label" }[S.theme]) }));
+    applyTheme(); toast("主题：" + { auto: "跟随系统", light: "浅色", dark: "深色" }[S.theme]);
     if (S.view === "settings") render();
   },
   "theme-set"(d) { S.theme = d.theme; applyTheme(); render(); },
-  "lang-set"(d) { setLang(d.lang); toast(t("lang_switched")); render(); },
   "key-toggle"() { S.keyVisible = !S.keyVisible; render(); },
   async "key-regen"() {
-    if (!(await confirmDlg(t("key_regen_confirm_title"), t("key_regen_confirm_msg"), t("key_regen_btn")))) return;
-    try { await api("/api/server/regenerate-key", { method: "POST" }); toast(t("key_regen_done")); S.keyVisible = true; await refresh(); }
+    if (!(await confirmDlg("重新生成 API Key？", "旧的 Key 将立即失效，所有已接入的客户端都需要更换新 Key。", "重新生成"))) return;
+    try { await api("/api/server/regenerate-key", { method: "POST" }); toast("新 Key 已生成"); S.keyVisible = true; await refresh(); }
     catch (e) { toast(e.message, "err"); }
   },
   async "port-regen"() {
-    if (!(await confirmDlg(t("port_regen_confirm_title"), t("port_regen_confirm_msg"), t("port_change_btn")))) return;
-    try { const r = await api("/api/server/regenerate-port", { method: "POST" }); toast(t("port_regen_done", { port: r.port })); await refresh(); }
+    if (!(await confirmDlg("随机更换监听端口？", "将生成一个新的随机端口，保存后需要重启程序生效。", "更换"))) return;
+    try { const r = await api("/api/server/regenerate-port", { method: "POST" }); toast("新端口 " + r.port + "，重启后生效"); await refresh(); }
     catch (e) { toast(e.message, "err"); }
   },
   async "server-restart"() {
-    if (!(await confirmDlg(t("restart_confirm_title"), t("restart_confirm_msg"), t("restart_btn"), false))) return;
-    try { await api("/api/server/restart", { method: "POST" }); toast(t("restarting")); }
+    if (!(await confirmDlg("重启网关服务？", "服务将退出并以新配置重新启动，面板会短暂不可用。", "重启", false))) return;
+    try { await api("/api/server/restart", { method: "POST" }); toast("正在重启…"); }
     catch (e) { toast(e.message, "err"); }
   },
-  async "mode-seg"(d) { await saveSettings({ mode: d.mode }); toast(t(d.mode === "safe" ? "mode_switched_safe" : "mode_switched_smart")); },
+  async "mode-seg"(d) { await saveSettings({ mode: d.mode }); toast(d.mode === "safe" ? "已切换到安全路由（仅可信渠道）" : "已切换到智能路由"); },
   async "host-seg"(d) { await saveSettings({ server: { host: d.host } }); },
   "provider-add"() { providerModal(null); },
   "provider-edit"(d) { const p = (cfg().providers || []).find(x => x.id === d.id); if (p) providerModal(p); },
   async "provider-del"(d) {
     const p = (cfg().providers || []).find(x => x.id === d.id);
     if (!p) return;
-    if (!(await confirmDlg(t("provider_del_confirm_title", { name: p.name }), t("provider_del_confirm_msg"), t("common_delete")))) return;
-    try { await api("/api/providers/" + p.id, { method: "DELETE" }); toast(t("provider_deleted")); await refresh(); }
+    if (!(await confirmDlg("删除渠道「" + p.name + "」？", "该渠道勾选的调度模型会一并移除。", "删除"))) return;
+    try { await api("/api/providers/" + p.id, { method: "DELETE" }); toast("已删除"); await refresh(); }
     catch (e) { toast(e.message, "err"); }
   },
   async "provider-refresh"(d) {
-    toast(t("provider_refreshing"));
+    toast("正在测试连接并获取模型列表…");
     try {
       const r = await api(`/api/providers/${d.id}/refresh`, { method: "POST" });
-      if (r.ok) toast(t("provider_refresh_ok", { count: r.models.length }));
-      else toast(t("provider_refresh_fail") + r.error, "err");
+      if (r.ok) toast(`连接正常，获取到 ${r.models.length} 个模型`);
+      else toast("连接失败：" + r.error, "err");
       await refresh();
     } catch (e) { toast(e.message, "err"); }
   },
@@ -91,7 +89,7 @@ const ACTIONS = {
     localStorage.setItem("gw_collapsed", JSON.stringify(arr));
     render();
   },
-  "cd-clear"() { api("/api/cooldowns/clear", { method: "POST", body: "{}" }).then(() => { toast(t("cd_cleared")); refresh(); }); },
+  "cd-clear"() { api("/api/cooldowns/clear", { method: "POST", body: "{}" }).then(() => { toast("冷却池已清空"); refresh(); }); },
   "cd-clear-one"(d) { api("/api/cooldowns/clear", { method: "POST", body: JSON.stringify({ key: d.key }) }).then(() => refresh()); },
   "log-filter"(d) { S.logFilter = d.f; render(); },
   "logs-clear"() { api("/api/logs/clear", { method: "POST" }).then(() => refresh()); },
@@ -103,7 +101,7 @@ const ACTIONS = {
         a.download = "llm-gateway-logs-" + new Date().toISOString().slice(0, 10) + ".json";
         a.click();
         setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-        toast(t("logs_exported"));
+        toast("日志已导出");
       });
   },
   "log-toggle"(d) {
@@ -117,18 +115,18 @@ const ACTIONS = {
         const a = document.createElement("a");
         a.href = URL.createObjectURL(b); a.download = "llm-gateway-config.json"; a.click();
         setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-        toast(t("config_exported"));
+        toast("配置已导出");
       });
   },
   "cfg-import"() { $("#import-file").click(); },
   "open-promo"() {
     api("/api/open-url", { method: "POST", body: JSON.stringify({ url: "https://aifangan.top" }) })
-      .catch(() => toast(t("toast_opened"), "err"));
+      .catch(() => toast("打开失败", "err"));
   },
   "sponsor-open"() {
-    toast(t("sponsor_placeholder"));
+    toast("赞助页地址预留位，后续在代码中替换为你的收款页链接");
   },
-  "sponsor-copy"(d) { copyText(d.copy || "https://example.com/sponsor", t("sponsor_copied")); },
+  "sponsor-copy"(d) { copyText(d.copy || "https://example.com/sponsor", "赞助链接已复制"); },
   "chip-ctx"(d, el) {
     // 阻止冒泡到 chip-toggle
     if (event) { event.stopPropagation(); event.preventDefault(); }
@@ -139,33 +137,33 @@ const ACTIONS = {
     const curVal = cur[0] || 0;
     const opts = [0, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576];
     openModal(`
-      <div class="modal-title">${t("ctx_edit_title", { model: esc(m) })}</div>
-      <div class="modal-msg">${t("ctx_current")}${curVal ? fmtCtx(curVal) + t(cur[1] ? "ctx_exact_label" : "ctx_guess_label") : t("ctx_unknown_short")}</div>
+      <div class="modal-title">修改上下文长度 — ${esc(m)}</div>
+      <div class="modal-msg">当前：${curVal ? fmtCtx(curVal) + (cur[1] ? "（渠道标注）" : "（推测）") : "未知"}</div>
       <div class="form-grid">
         <div class="form-item">
-          <label>${t("ctx_length_label")}</label>
+          <label>上下文长度（tokens）</label>
           <select id="ctx-sel">
-            ${opts.map(v => `<option value="${v}" ${v === curVal ? "selected" : ""}>${v === 0 ? t("ctx_unknown_short") : fmtCtx(v)}${v === 0 ? "" : " tokens"}</option>`).join("")}
+            ${opts.map(v => `<option value="${v}" ${v === curVal ? "selected" : ""}>${v === 0 ? "未知" : fmtCtx(v)}${v === 0 ? "" : " tokens"}</option>`).join("")}
           </select>
         </div>
         <div class="form-item">
-          <label>${t("ctx_manual_input")}</label>
-          <input type="number" id="ctx-input" min="0" max="2000000" placeholder="${t("ctx_placeholder")}" value="${curVal || ""}">
+          <label>或手动输入</label>
+          <input type="number" id="ctx-input" min="0" max="2000000" placeholder="例如 131072" value="${curVal || ""}">
         </div>
       </div>
-      <div class="modal-btns"><button class="btn btn-plain" id="ctx-cancel">${t("common_cancel")}</button><button class="btn btn-primary" id="ctx-save">${t("common_save")}</button></div>`);
+      <div class="modal-btns"><button class="btn btn-plain" id="ctx-cancel">取消</button><button class="btn btn-primary" id="ctx-save">保存</button></div>`);
     $("#ctx-sel").onchange = e => { $("#ctx-input").value = e.target.value; };
     $("#ctx-cancel").onclick = closeModal;
     $("#ctx-save").onclick = async () => {
       const v = parseInt($("#ctx-input").value || "0", 10);
-      if (v < 0 || v > 2000000) { toast(t("ctx_range_err"), "err"); return; }
+      if (v < 0 || v > 2000000) { toast("上下文长度需在 0–2000000 之间", "err"); return; }
       if (!p.model_ctx) p.model_ctx = {};
       p.model_ctx[m] = [v, true]; // 手动标注 = exact
       closeModal();
       render();
       try {
         await api("/api/providers/" + p.id, { method: "PUT", body: JSON.stringify({ model_context: p.model_ctx }) });
-        toast(t("ctx_updated"));
+        toast("上下文长度已更新");
       } catch (e) { toast(e.message, "err"); refresh(); }
     };
   },
@@ -174,21 +172,21 @@ const ACTIONS = {
     const p = (cfg().providers || []).find(x => x.id === d.id);
     if (!p) return;
     const models = (p.fetched_models && p.fetched_models.length ? p.fetched_models : p.sched_models) || [];
-    if (!models.length) { toast(t("no_models_fetch_first"), "err"); return; }
+    if (!models.length) { toast("该渠道还没有模型，请先获取模型列表", "err"); return; }
     const rows = models.map(m => {
       const cur = (p.model_ctx || {})[m] || (p.model_context || {})[m] || [0, false];
       const v = cur[0] || 0;
       return `
       <div class="form-item">
         <label>${esc(m)}</label>
-        <input type="number" min="0" max="2000000" data-ctx-input="${esc(m)}" placeholder="${t("ctx_zero_unknown")}" value="${v || ""}">
+        <input type="number" min="0" max="2000000" data-ctx-input="${esc(m)}" placeholder="0 = 未知" value="${v || ""}">
       </div>`;
     }).join("");
     openModal(`
-      <div class="modal-title">${t("ctx_batch_title", { name: esc(p.name) })}</div>
-      <div class="modal-msg">${t("ctx_batch_hint")}</div>
+      <div class="modal-title">模型上下文（tokens）— ${esc(p.name)}</div>
+      <div class="modal-msg">每个模型填一个数：131072 = 128K。留空或 0 = 未知，网关会自动推测。常用：32768=32K，65536=64K，131072=128K，262144=256K，1048576=1M。</div>
       <div class="form-grid" style="max-height:46vh;overflow:auto">${rows}</div>
-      <div class="modal-btns"><button class="btn btn-plain" id="pcx-cancel">${t("common_cancel")}</button><button class="btn btn-primary" id="pcx-save">${t("common_save")}</button></div>`);
+      <div class="modal-btns"><button class="btn btn-plain" id="pcx-cancel">取消</button><button class="btn btn-primary" id="pcx-save">保存</button></div>`);
     $("#pcx-cancel").onclick = closeModal;
     $("#pcx-save").onclick = async () => {
       const mc = {};
@@ -199,7 +197,7 @@ const ACTIONS = {
       closeModal();
       try {
         await api("/api/providers/" + p.id, { method: "PUT", body: JSON.stringify({ model_context: mc }) });
-        toast(t("ctx_saved"));
+        toast("模型上下文已保存");
         await refresh();
       } catch (e) { toast(e.message, "err"); refresh(); }
     };
@@ -210,13 +208,13 @@ const CHANGES = {
   async "autostart"(d, el) {
     try {
       const r = await api("/api/autostart", { method: "POST", body: JSON.stringify({ enabled: el.checked }) });
-      if (r.ok !== false) toast(t(el.checked ? "autostart_enabled" : "autostart_disabled"));
-      else { toast(r.error || t("settings_failed"), "err"); el.checked = !el.checked; }
+      if (r.ok !== false) toast(el.checked ? "已开启开机自启（后台无界面模式）" : "已关闭开机自启");
+      else { toast(r.error || "设置失败", "err"); el.checked = !el.checked; }
     } catch (e) { toast(e.message, "err"); el.checked = !el.checked; }
   },
   "provider-enabled"(d, el) {
     api("/api/providers/" + d.id, { method: "PUT", body: JSON.stringify({ enabled: el.checked }) })
-      .then(async () => { toast(t(el.checked ? "provider_enabled" : "provider_disabled")); await refresh(); })
+      .then(async () => { toast(el.checked ? "渠道已启用" : "渠道已停用"); await refresh(); })
       .catch(e => { toast(e.message, "err"); refresh(); });
   },
   "dd-toggle"(d, el) {
@@ -227,7 +225,7 @@ const CHANGES = {
     const list = $("#recList");
     if (list) list.style.display = "none";
     await saveSettings({ recommended_model: d.v });
-    toast(t("rec_model_set", { name: d.v }));
+    toast(`智能体模型名已设为「${d.v}」`);
   },
   "provider-priority"(d, el) {
     const v = Math.max(1, parseInt(el.value || "1", 10));
@@ -241,10 +239,10 @@ const CHANGES = {
   },
   async "settings-port"(d, el) {
     const v = parseInt(el.value || "0", 10);
-    if (!v || v < 1 || v > 65535) { toast(t("port_range_err"), "err"); render(); return; }
+    if (!v || v < 1 || v > 65535) { toast("端口范围 1–65535", "err"); render(); return; }
     if (v === cfg().server.port) return;
-    if (!(await confirmDlg(t("port_change_confirm_title"), t("port_change_confirm_msg", { port: v }), t("port_change_btn")))) { render(); return; }
-    try { await api("/api/server/set-port", { method: "POST", body: JSON.stringify({ port: v }) }); toast(t("port_saved", { port: v })); await refresh(); }
+    if (!(await confirmDlg("更换监听端口？", "将端口改为 " + v + "，保存后需要重启程序生效。", "更换"))) { render(); return; }
+    try { await api("/api/server/set-port", { method: "POST", body: JSON.stringify({ port: v }) }); toast("端口已保存为 " + v + "，重启后生效"); await refresh(); }
     catch (e) { toast(e.message, "err"); render(); }
   },
 };
@@ -271,10 +269,10 @@ document.addEventListener("change", e => {
 document.addEventListener("change", e => {
   if (e.target && e.target.id === "import-file" && e.target.files && e.target.files[0]) {
     const f = e.target.files[0];
-    f.text().then(async txt => {
-      if (!(await confirmDlg(t("import_confirm_title"), t("import_confirm_msg"), t("common_import"), false))) return;
+    f.text().then(async t => {
+      if (!(await confirmDlg("导入配置？", "将覆盖当前全部渠道与设置（文件含密钥时一并导入）。", "导入", false))) return;
       S.busy = true;
-      try { await api("/api/config/import", { method: "POST", body: txt }); toast(t("config_imported")); await refresh(); }
+      try { await api("/api/config/import", { method: "POST", body: t }); toast("配置已导入"); await refresh(); }
       catch (e) { toast(e.message, "err"); } finally { S.busy = false; }
     });
     e.target.value = "";

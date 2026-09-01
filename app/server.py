@@ -559,31 +559,22 @@ async def v1_messages(req: Request, _=Depends(gateway_auth)):
     skip_providers = set()
     t_start = time.time()
     last_err = ""
-
     for cand in sel.candidates:
-        if tried >= max_attempts:
-            break
         if cand.provider["id"] in skip_providers:
             continue
         blocked, remain = state_mod.blocked(cand.key)
         if blocked:
             attempts_log.append({"provider": cand.provider.get("name"), "model": cand.model,
-                                 "skipped": "冷却中，剩余 " + str(int(remain)) + " 秒"})
+                                 "skipped": f"冷却中，剩余 {int(remain)} 秒"})
             continue
         pblocked, prem = state_mod.provider_blocked(cand.provider["id"])
         if pblocked:
             attempts_log.append({"provider": cand.provider.get("name"), "model": cand.model,
                                  "skipped": f"渠道冷却中（额度），剩余 {int(prem)} 秒"})
             continue
-        # max_attempts 按「渠道」计数：同一渠道内的模型连续失败不消耗次数，
-        # 保证渠道内全部勾选模型试完才降级到下一渠道（site_first 语义）。
-        if cand.provider["id"] != last_provider:
-            tried += 1
-            last_provider = cand.provider["id"]
+        last_provider = cand.provider["id"]
         t0 = time.time()
-        payload = dict(body_openai)
-        payload["model"] = cand.model
-        payload["stream"] = stream
+        usage_box = {}
         hreq = CLIENT.build_request("POST", adapters.chat_url(cand.provider),
                                     headers=adapters.provider_headers(cand.provider),
                                     json=payload, timeout=_timeout(cfg))
@@ -731,13 +722,7 @@ async def _execute(cfg: dict, sel, body: dict, stream: bool, endpoint: str = "ch
 
 
     for cand in sel.candidates:
-
-        if tried >= max_attempts:
-
-            break
-
         if cand.provider["id"] in skip_providers:
-
             continue
 
         blocked, remain = state_mod.blocked(cand.key)

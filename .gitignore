@@ -2,11 +2,16 @@ __pycache__/
 *.pyc
 build/
 dist/
-installer/
-*.log
+*.spec
 .DS_Store
 venv/
 .env
-config.json
-state.json
-*.exe
+
+# 本地运行日志（含本地网关 Key，勿上传）
+.gw.log
+.gw-tray.log
+.tray-debug.log
+*.log
+
+# Inno Setup 输出
+installer/*.exe

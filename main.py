@@ -295,7 +295,6 @@ def main() -> None:
         if not _wait_started(srv):
             print("[!] 服务启动失败，请检查端口占用")
             return
-        import webbrowser
         webbrowser.open(url)
         print("[i] 已在默认浏览器打开管理面板。Ctrl+C 停止服务。")
         try:

@@ -1,0 +1,134 @@
+from . import anthropic_compat
+
+
+def _anth_error(status: int, message: str):
+    return JSONResponse(status_code=status,
+                        content=anthropic_compat.anthropic_error(status, message))
+
+
+@app.post("/v1/messages")
+async def v1_messages(req: Request, _=Depends(gateway_auth)):
+    """Anthropic Messages 协议兼容端点（/v1/messages），供 Claude 方言客户端使用。"""
+    try:
+        body = await req.json()
+    except Exception:
+        return JSONResponse(status_code=400,
+                            content=anthropic_compat.anthropic_error(400, "请求体不是合法 JSON"))
+    model = str(body.get("model") or "auto")
+    stream = bool(body.get("stream"))
+    cfg = cfgmod.cfg()
+    sel = router_mod.select(cfg, model)
+    if not sel.ok:
+        return JSONResponse(status_code=sel.code,
+                            content=anthropic_compat.anthropic_error(sel.code, sel.message))
+    body_openai = anthropic_compat.to_openai_request(body)
+    routing = cfg.get("routing") or {}
+    try:
+        max_attempts = max(1, int(routing.get("max_attempts") or 4))
+    except Exception:
+        max_attempts = 4
+    cooldown_cfg = cfg.get("cooldown") or {}
+    base = max(1, int(cooldown_cfg.get("base_seconds") or 60))
+    maxs = max(base, int(cooldown_cfg.get("max_seconds") or 1800))
+
+    attempts_log = []
+    tried = 0
+    skip_providers = set()
+    t_start = time.time()
+    last_err = ""
+
+    for cand in sel.candidates:
+        if tried >= max_attempts:
+            break
+        if cand.provider["id"] in skip_providers:
+            continue
+        blocked, remain = state_mod.blocked(cand.key)
+        if blocked:
+            attempts_log.append({"provider": cand.provider.get("name"), "model": cand.model,
+                                 "skipped": "冷却中，剩余 " + str(int(remain)) + " 秒"})
+            continue
+        tried += 1
+        t0 = time.time()
+        payload = dict(body_openai)
+        payload["model"] = cand.model
+        payload["stream"] = stream
+        hreq = CLIENT.build_request("POST", adapters.chat_url(cand.provider),
+                                    headers=adapters.provider_headers(cand.provider),
+                                    json=payload, timeout=_timeout(cfg))
+        try:
+            r = await CLIENT.send(hreq)
+            if r.status_code != 200:
+                adapters.raise_for_status(r.status_code, r.text, r.headers)
+            if stream:
+                conv = anthropic_compat.StreamToAnthropic(str(body.get("model") or cand.model))
+                state_mod.mark_success(cand.key)
+                state_mod.log_request(ok=True, ms=int((time.time() - t0) * 1000), stream=True,
+                                      alias=sel.alias, provider=cand.provider.get("name"),
+                                      model=cand.model, attempts=attempts_log)
+                NL = chr(10)
+                start_data = {"type": "message_start", "message": {
+                    "id": "msg_gw", "type": "message", "role": "assistant",
+                    "model": cand.model, "content": [], "usage": {"input_tokens": 0}}}
+
+                async def gen():
+                    try:
+                        yield "event: message_start" + NL + "data: " + json.dumps(
+                            start_data, ensure_ascii=False) + NL + NL
+                        buf = ""
+                        async for raw in r.aiter_bytes():
+                            buf += raw.decode("utf-8", "replace")
+                            while NL in buf:
+                                ln, buf = buf.split(NL, 1)
+                                ln = ln.strip()
+                                if not ln.startswith("data:"):
+                                    continue
+                                data = ln[5:].strip()
+                                if data == "[DONE]":
+                                    break
+                                try:
+                                    evs = conv.feed(json.loads(data))
+                                except Exception:
+                                    continue
+                                for e in evs:
+                                    yield e
+                        for e in conv.finish():
+                            yield e
+                    except Exception:
+                        pass
+                    finally:
+                        await r.aclose()
+
+                return StreamingResponse(gen(), media_type="text/event-stream",
+                                         headers={"Cache-Control": "no-cache",
+                                                  "X-Accel-Buffering": "no"})
+            data = r.json()
+            out = anthropic_compat.openai_to_anthropic(data, str(body.get("model") or cand.model))
+            state_mod.mark_success(cand.key)
+            state_mod.log_request(ok=True, ms=int((time.time() - t0) * 1000), stream=False,
+                                  alias=sel.alias, provider=cand.provider.get("name"),
+                                  model=cand.model,
+                                  usage=(data.get("usage") or {}).get("prompt_tokens"),
+                                  attempts=attempts_log)
+            return JSONResponse(out)
+        except adapters.UpstreamError as e:
+            if e.retryable:
+                state_mod.mark_fail(cand.key, base, maxs, e.retry_after, str(e))
+            if e.status in (401, 403):
+                skip_providers.add(cand.provider["id"])
+            attempts_log.append({"provider": cand.provider.get("name"), "model": cand.model,
+                                 "status": e.status or "network", "error": str(e)[:200],
+                                 "cooldown": bool(e.retryable)})
+            last_err = str(e)[:200]
+        except httpx.HTTPError as e:
+            state_mod.mark_fail(cand.key, base, maxs, None, str(e))
+            attempts_log.append({"provider": cand.provider.get("name"), "model": cand.model,
+                                 "status": "network", "error": str(e)[:200], "cooldown": True})
+            last_err = str(e)[:200]
+
+    state_mod.log_request(ok=False, ms=int((time.time() - t_start) * 1000), stream=stream,
+                          alias=sel.alias, provider=None, model=str(body.get("model") or ""),
+                          error="所有候选渠道均失败", attempts=attempts_log)
+    return JSONResponse(status_code=502,
+                        content=anthropic_compat.anthropic_error(502, "所有候选渠道均失败（已按档位依次尝试）：" + last_err))
+
+

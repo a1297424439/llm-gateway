@@ -7,10 +7,10 @@ const IC = {
   logs: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M8.5 6h11M8.5 12h11M8.5 18h11"/><circle cx="4.2" cy="6" r="1.1" fill="currentColor" stroke="none"/><circle cx="4.2" cy="12" r="1.1" fill="currentColor" stroke="none"/><circle cx="4.2" cy="18" r="1.1" fill="currentColor" stroke="none"/></svg>',
 };
 const TABS = [
-  { id: "dashboard", icon: IC.dash },
-  { id: "providers", icon: IC.server },
-  { id: "settings", icon: IC.route },
-  { id: "logs", icon: IC.logs },
+  { id: "dashboard", name: "概览", icon: IC.dash },
+  { id: "providers", name: "渠道", icon: IC.server },
+  { id: "settings", name: "设置", icon: IC.route },
+  { id: "logs", name: "日志", icon: IC.logs },
 ];
 
 

@@ -18,8 +18,8 @@ function ctxOf(p, m) {
 }
 function ctxBadge(p, m) {
   const { ctx, exact } = ctxOf(p, m);
-  if (!ctx) return `<span class="ctx unknown" title="${t("ctx_unknown")}">?</span>`;
-  return `<span class="ctx ${exact ? "" : "guess"}" title="${exact ? t("ctx_exact") : t("ctx_guess")}">${exact ? "" : "~"}${fmtCtx(ctx)}</span>`;
+  if (!ctx) return '<span class="ctx unknown" title="上下文未知：可手动勾选，自行判断">?</span>';
+  return `<span class="ctx ${exact ? "" : "guess"}" title="${exact ? "渠道标注的上下文" : "按模型家族推测的上下文"}">${exact ? "" : "~"}${fmtCtx(ctx)}</span>`;
 }
 
 
