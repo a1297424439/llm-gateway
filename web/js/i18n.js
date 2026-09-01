@@ -99,7 +99,7 @@ const I18N = {
     // 设置页（settings）
     view_title_settings: "设置",
     sponsor_title: "支持这个项目", sponsor_sub: "如果调度中枢对你有帮助，欢迎请作者喝杯咖啡",
-    sponsor_qr_hint: "扫码支持，感谢你的认可",
+    sponsor_qr_hint: "感谢义父义母赞助，作者跪谢 🙏",
     sponsor_copy: "复制赞助链接", sponsor_open: "打开赞助页",
     routing_params: "调度参数", routing_params_sub: "调度模式在「概览」页顶部切换",
     max_attempts: "最大尝试次数", max_attempts_desc: "单次请求最多尝试的候选渠道数量",
@@ -273,7 +273,7 @@ const I18N = {
     prov_empty_big: "No providers yet", prov_empty_hint: "Click \"＋ Add provider\" — fill DeepSeek, GLM, Kimi and more from presets in one tap",
     view_title_settings: "Settings",
     sponsor_title: "Support this project", sponsor_sub: "If this dispatcher helps you, buy the author a coffee",
-    sponsor_qr_hint: "Scan the QR code to sponsor — thank you for the support",
+    sponsor_qr_hint: "Thanks for the sponsorship, kind patron 🙏",
     sponsor_copy: "Copy sponsor link", sponsor_open: "Open sponsor page",
     routing_params: "Dispatch parameters", routing_params_sub: "Switch mode at the top of the Overview page",
     max_attempts: "Max attempts", max_attempts_desc: "Max candidate providers tried per request",
