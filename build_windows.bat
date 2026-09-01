@@ -6,7 +6,7 @@ echo  LLM 智能调度网关 - Windows 打包
 echo ============================================
 python -m pip install -r requirements.txt || goto :err
 python -m pip install pyinstaller pywebview || goto :err
-python -m PyInstaller --noconfirm --clean --onefile --name llm-gateway ^
+python -m PyInstaller --noconfirm --clean --onefile --noconsole --icon icon.ico --name llm-gateway ^
   --add-data "web;web" ^
   --collect-all uvicorn ^
   --collect-all webview ^
