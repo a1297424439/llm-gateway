@@ -211,8 +211,12 @@ async function handleDrop(srcId, targetId, toTier, placement = "before") {
     if (ti < 0) return;
     if (placement === "after") ti += 1;
     order.splice(ti, 0, srcId);
-    if (destTier === null || destTier === undefined) destTier = tierOf(byId[targetId]);
+    // 归位到「插入点紧邻元素」所在档：before 时后面即 target（=target 档）；
+    // after 档末时后面是下一档第一张（=下一档）——修复拖到边界被弹回原档。
+    const nextId = order[ti + 1];
+    destTier = nextId ? tierOf(byId[nextId]) : tierOf(byId[targetId]);
   } else if (destTier === null || destTier === undefined) return;
+  else { order.push(srcId); }
   const tiers = [[], [], []];
   for (const id of order) tiers[id === srcId ? destTier : tierOf(byId[id])].push(id);
   S.busy = true;
