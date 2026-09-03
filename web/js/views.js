@@ -200,8 +200,12 @@ const VIEWS = {
         <input type="number" min="1" max="10" value="${r.max_attempts ?? 4}" data-change="settings-num" data-sect="routing" data-field="max_attempts">
       </div>
       <div class="row">
-        <div class="row-main"><div class="label">上游超时（秒）</div><div class="desc">连接与流式读取的超时时间</div></div>
+        <div class="row-main"><div class="label">上游超时（秒）</div><div class="desc">连接与流式读取的整体兜底超时</div></div>
         <input type="number" min="10" max="600" value="${r.timeout_seconds ?? 120}" data-change="settings-num" data-sect="routing" data-field="timeout_seconds">
+      </div>
+      <div class="row">
+        <div class="row-main"><div class="label">模型响应超时（秒）</div><div class="desc">单个模型超过此时间未响应即跳过、进冷却换下一个；默认 90 秒覆盖 99% 正常响应（实测 p95≈38s）</div></div>
+        <input type="number" min="10" max="600" value="${r.model_timeout_seconds ?? 90}" data-change="settings-num" data-sect="routing" data-field="model_timeout_seconds">
       </div>
     </div>
 

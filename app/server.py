@@ -407,21 +407,25 @@ def lan_ip() -> str:
 
 
 def _timeout(cfg: dict) -> httpx.Timeout:
-
     t = 120
-
     try:
-
         t = int(cfg["routing"].get("timeout_seconds") or 120)
-
     except Exception:
-
         pass
+    # 模型超时（默认90s）作为 read 上限，超过即跳过该模型；全局超时兜底
+    mto = _model_timeout_seconds(cfg)
+    read = max(1, min(t, mto))
+    return httpx.Timeout(connect=15, read=read, write=60, pool=10)
 
-    return httpx.Timeout(connect=15, read=max(10, t), write=60, pool=10)
 
-
-
+def _model_timeout_seconds(cfg: dict) -> int:
+    """模型响应超时阈值（秒）。超过即判该模型过慢，跳过进冷却。"""
+    t = 90
+    try:
+        t = int(cfg["routing"].get("model_timeout_seconds") or 90)
+    except Exception:
+        pass
+    return max(1, t)
 
 
 @app.get("/health")
@@ -645,6 +649,12 @@ async def v1_messages(req: Request, _=Depends(gateway_auth)):
                                  "status": e.status or "network", "error": str(e)[:200],
                                  "cooldown": bool(e.retryable)})
             last_err = str(e)[:200]
+        except httpx.TimeoutException as e:
+            # 模型响应超过阈值 → 跳过该模型进冷却
+            state_mod.mark_fail(cand.key, base, maxs, None, "超时 " + str(e))
+            attempts_log.append({"provider": cand.provider.get("name"), "model": cand.model,
+                                 "status": "timeout", "error": f"超时({_model_timeout_seconds(cfg)}s)", "cooldown": True})
+            last_err = f"超时({_model_timeout_seconds(cfg)}s): " + str(e)[:120]
         except httpx.HTTPError as e:
             state_mod.mark_fail(cand.key, base, maxs, None, str(e))
             attempts_log.append({"provider": cand.provider.get("name"), "model": cand.model,
@@ -808,6 +818,16 @@ async def _execute(cfg: dict, sel, body: dict, stream: bool, endpoint: str = "ch
                                  "status": e.status or "network", "error": str(e)[:200],
 
                                  "cooldown": bool(e.retryable)})
+
+        except httpx.TimeoutException as e:
+
+            state_mod.mark_fail(cand.key, base, maxs, None, "超时 " + str(e))
+
+            attempts_log.append({"provider": cand.provider.get("name"), "model": cand.model,
+
+                                 "status": "timeout", "error": f"超时({_model_timeout_seconds(cfg)}s)", "cooldown": True})
+
+
 
         except httpx.HTTPError as e:
 
@@ -1199,7 +1219,7 @@ async def api_settings(req: Request, _=Depends(api_auth)):
 
                 dst["strategy"] = r["strategy"]
 
-            _sanitize_section(dst, r, ["max_attempts", "timeout_seconds"], int)
+            _sanitize_section(dst, r, ["max_attempts", "timeout_seconds", "model_timeout_seconds"], int)
 
             if isinstance(r.get("whitelist"), list):
 

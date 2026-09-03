@@ -1,5 +1,5 @@
 #define MyAppName "LLM Gateway"
-#define MyAppVersion "1.0.15"
+#define MyAppVersion "1.0.17"
 #define MyAppPublisher "DaFeiPower"
 #define MyAppExeName "llm-gateway.exe"
 
@@ -17,7 +17,8 @@ OutputBaseFilename=LLM-Gateway-Setup
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
-PrivilegesRequired=lowest
+PrivilegesRequired=admin
+PrivilegesRequiredOverridesAllowed=commandline
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\{#MyAppExeName}
 CloseApplications=yes
