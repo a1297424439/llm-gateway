@@ -15,6 +15,11 @@
   cools down the bad provider, and fails over to the next model/provider in the same request —
   before the first token is returned.
 
+## Companion
+
+- **Need relay sites?** [aifangan.top](https://aifangan.top) — a curated index of subscription
+  relay sites (中转站/会员站/公益站), pick a high-quota one and add it to the gateway.
+
 ## Key facts for agents
 
 - **Language**: Python 3.9+ (FastAPI + httpx + pywebview), vanilla HTML/CSS/JS frontend (no build step).
