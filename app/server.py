@@ -1167,6 +1167,83 @@ async def api_presets(_=Depends(api_auth)):
 
 
 
+@app.get("/api/check-update")
+async def api_check_update(_=Depends(api_auth)):
+    """查询 GitHub 最新 Release，比对当前版本。失败静默返回 latest=当前版本。"""
+    import re as _re
+    latest = VERSION
+    url = "https://api.github.com/repos/a1297424439/llm-gateway/releases/latest"
+    try:
+        r = await CLIENT.get(url, headers={"Accept": "application/vnd.github+json",
+                                           "User-Agent": "llm-gateway"}, timeout=5)
+        if r.status_code == 200:
+            tag = (r.json().get("tag_name") or "").lstrip("v")
+            if _re.match(r"^\d+(\.\d+){1,3}$", tag):
+                latest = tag
+    except Exception:
+        pass
+    return {"current": VERSION, "latest": latest, "has_update": _newer_than(latest, VERSION)}
+
+
+def _newer_than(a: str, b: str) -> bool:
+    """比较版本号 a > b（逐段数字比较）。"""
+    try:
+        pa = [int(x) for x in a.split(".")]
+        pb = [int(x) for x in b.split(".")]
+        while len(pa) < len(pb):
+            pa.append(0)
+        while len(pb) < len(pa):
+            pb.append(0)
+        return pa > pb
+    except Exception:
+        return False
+
+
+@app.post("/api/apply-update")
+async def api_apply_update(_=Depends(api_auth)):
+    """下载最新 Release 安装包并静默安装（安装器会接管并重启进程）。"""
+    import os as _os
+    import subprocess as _sp
+    import tempfile as _tf
+
+    url = "https://api.github.com/repos/a1297424439/llm-gateway/releases/latest"
+    try:
+        r = await CLIENT.get(url, headers={"Accept": "application/vnd.github+json",
+                                           "User-Agent": "llm-gateway"}, timeout=10)
+        if r.status_code != 200:
+            return {"ok": False, "error": "获取版本信息失败"}
+        data = r.json()
+        assets = data.get("assets") or []
+        asset = next((a for a in assets if (a.get("name") or "").endswith(".exe")), None)
+        if not asset:
+            return {"ok": False, "error": "最新版本未提供安装包"}
+        dl = asset["browser_download_url"]
+    except Exception as e:
+        return {"ok": False, "error": "获取更新信息失败: " + str(e)[:200]}
+
+    tmp_path = _os.path.join(_tf.gettempdir(), "llm-gateway-setup.exe")
+    dlc = httpx.AsyncClient(follow_redirects=True,
+                            timeout=httpx.Timeout(connect=15, read=300, write=60, pool=10))
+    try:
+        async with dlc.stream("GET", dl) as resp:
+            if resp.status_code != 200:
+                return {"ok": False, "error": "下载失败 HTTP " + str(resp.status_code)}
+            with open(tmp_path, "wb") as f:
+                async for chunk in resp.aiter_bytes():
+                    f.write(chunk)
+    except Exception as e:
+        return {"ok": False, "error": "下载失败: " + str(e)[:200]}
+    finally:
+        await dlc.aclose()
+
+    try:
+        _sp.Popen([tmp_path, "/VERYSILENT", "/NORESTART", "/SUPPRESSMSGBOXES", "/NOCANCEL"])
+    except Exception as e:
+        return {"ok": False, "error": "启动安装器失败: " + str(e)[:200]}
+
+    return {"ok": True, "message": "更新已开始，程序即将重启"}
+
+
 def _sanitize_section(dst: dict, patch: dict, keys, cast=None):
 
     for k in keys:

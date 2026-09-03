@@ -260,6 +260,13 @@ const VIEWS = {
         <div class="row-main"><div class="label">开机自启</div><div class="desc">登录系统后自动在后台启动网关（无界面模式，地址与 Key 不变）</div></div>
         <label class="switch"><input type="checkbox" data-change="autostart" ${S.autostart ? "checked" : ""}><span class="knob"></span></label>
       </div>
+      <div class="row">
+        <div class="row-main"><div class="label">关于</div><div class="desc">当前版本 <span class="mono">${esc(S.data.version || "")}</span><span id="updateHint"></span></div></div>
+        <div class="btn-row">
+          <button class="btn btn-sm btn-plain" data-act="check-update">检查更新</button>
+          <button class="btn btn-sm btn-plain" id="applyUpdateBtn" data-act="apply-update" style="display:none">立即更新</button>
+        </div>
+      </div>
     </div>
 
     <div class="card fade-in">

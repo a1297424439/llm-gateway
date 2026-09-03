@@ -85,8 +85,8 @@ def defaults() -> dict:
         "routing": {
             "strategy": "site_first",   # site_first=网站优先 model_first=模型优先
             "max_attempts": 4,
-            "timeout_seconds": 120,
-            "model_timeout_seconds": 90,  # 模型响应超时：超过即跳过该模型进冷却
+            "timeout_seconds": 120,     # 连接/整体兜底超时
+            "model_timeout_seconds": 90,  # 模型响应超时：超过即跳过该模型进冷却（默认90s覆盖99%正常响应）
             "whitelist_enabled": False,
             "whitelist": [],            # 有序：数组顺序即优先级
             "whitelist_fallback": True,  # 请求不在白名单时按白名单优先级回退

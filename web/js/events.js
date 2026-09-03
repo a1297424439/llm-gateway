@@ -21,6 +21,41 @@ const ACTIONS = {
     try { const r = await api("/api/server/regenerate-port", { method: "POST" }); toast("新端口 " + r.port + "，重启后生效"); await refresh(); }
     catch (e) { toast(e.message, "err"); }
   },
+  async "check-update"() {
+    const hint = document.getElementById("updateHint");
+    const btn = document.getElementById("applyUpdateBtn");
+    if (hint) hint.textContent = "（检查中…）";
+    try {
+      const r = await api("/api/check-update");
+      if (r.has_update) {
+        if (hint) hint.textContent = "（发现新版本 v" + r.latest + "）";
+        if (btn) btn.style.display = "";
+        toast("发现新版本 v" + r.latest + "，可点击「立即更新」自动升级");
+      } else {
+        if (hint) hint.textContent = "（已是最新 v" + r.current + "）";
+        if (btn) btn.style.display = "none";
+        toast("已是最新版本 v" + r.current);
+      }
+    } catch (e) {
+      if (hint) hint.textContent = "（检查失败）";
+      toast("检查更新失败：" + e.message, "err");
+    }
+  },
+  async "apply-update"() {
+    if (!(await confirmDlg("立即更新？", "将下载最新版安装包并静默安装，安装过程中程序会自动重启。", "更新", true))) return;
+    const btn = document.getElementById("applyUpdateBtn");
+    const hint = document.getElementById("updateHint");
+    if (btn) { btn.disabled = true; btn.textContent = "更新中…"; }
+    if (hint) hint.textContent = "（正在下载最新版，请稍候…）";
+    try {
+      const r = await api("/api/apply-update", { method: "POST" });
+      toast(r.message || "更新已开始");
+    } catch (e) {
+      if (btn) { btn.disabled = false; btn.textContent = "立即更新"; }
+      if (hint) hint.textContent = "（更新失败）";
+      toast("更新失败：" + e.message, "err");
+    }
+  },
   async "server-restart"() {
     if (!(await confirmDlg("重启网关服务？", "服务将退出并以新配置重新启动，面板会短暂不可用。", "重启", false))) return;
     try { await api("/api/server/restart", { method: "POST" }); toast("正在重启…"); }
