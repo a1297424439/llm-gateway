@@ -1,0 +1,128 @@
+# LLM Gateway — Full Documentation (for LLM agents)
+
+## One-line
+
+Local LLM API dispatcher/gateway that unifies multiple subscription-based relay sites
+(中转站 / 订阅站 / 公益站 / free API relay) into ONE OpenAI-compatible endpoint, with automatic
+tiered failover, provider cooldown, model-timeout skip, and trusted routing.
+
+## The problem it solves
+
+Subscription relay sites (ShareLLM-style 中转站) are unstable: free quota runs out (HTTP 402/403
+"免费模型额度已用尽"), rate-limits hit (HTTP 429), models hang, or the whole site goes down.
+A client pointed directly at one relay gets 502s constantly.
+
+LLM Gateway sits between the client and N relay providers. On each request it:
+1. sorts candidate (provider, model) pairs by dispatch tier + priority,
+2. tries them in order,
+3. on "quota exhausted" → cools down the WHOLE provider for hours (5h → 7d cap),
+4. on rate-limit (429) → short provider cooldown (60s → 10min cap),
+5. on model error → model-level exponential backoff (base × 2ⁿ, capped),
+6. on model timeout (> model_timeout_seconds, default 90s) → skip + cool that model,
+7. returns the first successful response (failover happens BEFORE first token is streamed).
+
+Net effect: many flaky relays aggregate into one stable local endpoint.
+
+## Tech stack
+
+- Python 3.9+ (FastAPI, httpx, pywebview for desktop window, pystray for tray).
+- Frontend: vanilla HTML/CSS/JS, no build step (web/ dir, served as static).
+- Single-file Windows build via PyInstaller; Inno Setup installer (setup.iss).
+- Platforms: Windows / Linux / macOS.
+
+## Architecture (file map)
+
+- `main.py` — entrypoint: random port/key generation, restart grace, startup banner,
+  desktop window (pywebview) vs `--browser` vs `--no-ui` headless.
+- `app/config.py` — config persistence (`config.json`), random `sk-lg-` key/port generation,
+  BOM-tolerant load, `.bad` backup on corrupt config, deep-merge defaults.
+- `app/router.py` — dispatch selection: builds ordered candidate list (tier → priority → name),
+  trusted-routing filter (safe mode), `auto` virtual model aggregation.
+- `app/adapters.py` — OpenAI ↔ Anthropic conversion (messages, streaming, tool calls),
+  SSE parsing, error classification (quota vs rate-limit vs retryable), model-list fetch.
+- `app/state.py` — request logs, double-layer cooldown pool (model-level exponential backoff +
+  provider-level quota/rate cooldown), stats, persistence (`state.json`).
+- `app/server.py` — FastAPI: `/v1/*` OpenAI-compatible gateway + `/api/*` panel endpoints +
+  static web serving; model-timeout logic; both dispatch loops (chat + /v1/messages).
+- `app/presets.py` — common provider presets with trusted flag.
+- `web/js/*` — frontend modules: views (render), drag (tier reorder), events, render, sched, api.
+- `tests/` — `smoke.py` end-to-end (mock upstream) + `mock_upstream.py`.
+
+## Core concepts
+
+### Dispatch tiers
+Providers have an integer `priority`. Tier = `priority < 10 ? 0 : priority < 20 ? 1 : 2`.
+- tier 0 (一档): primary — free/public relays go here.
+- tier 1 (二档): steady fallback.
+- tier 2 (三档): official last-resort (e.g. DeepSeek official).
+Drag-and-drop cards in the panel to reorder; backend `/api/providers/reorder` reassigns priority
+as base(1/10/20) + position.
+
+### Double cooldown
+- model-level: `base_seconds × 2^(fails-1)`, capped at `max_seconds`; half-open retry on expiry.
+- provider-level: quota errors → `provider_base_seconds` (default 18000 = 5h) → cap
+  `provider_max_seconds` (604800 = 7d); rate-limit → 60s → 10min. Provider cooldown clears on any
+  successful request through that provider.
+
+### Model timeout
+`routing.model_timeout_seconds` (default 90) is the read-timeout cap. A model exceeding it is
+skipped and cooled down (status "timeout" in logs). Chosen from real latency data: median 10s,
+p95 ≈ 38s, max 81s — so 90s covers ~99% of healthy responses.
+
+### Trusted routing
+`safe` mode filters candidates to providers with `trusted: true` (read-compat `trusted ?? domestic`).
+
+### Virtual model `auto`
+Aggregates all scheduled models across providers, iterating by tier; context length = min of
+scheduled models.
+
+## Config format (config.json)
+
+```json
+{
+  "version": 1,
+  "mode": "smart",
+  "server": {"host": "127.0.0.1", "port": 33308, "key": "sk-lg-...", "key_history": [], "lan_allowed": false, "close_action": "hide"},
+  "routing": {"strategy": "site_first", "max_attempts": 4, "timeout_seconds": 120, "model_timeout_seconds": 90},
+  "cooldown": {"base_seconds": 300, "max_seconds": 3600, "provider_base_seconds": 18000, "provider_max_seconds": 604800},
+  "aggregate": {"name": "auto", "min_context": 1000000, "per_provider": 3},
+  "providers": [{"id": "p_xxx", "name": "...", "base_url": "https://host/v1", "api_key": "sk-...", "adapter": "openai|anthropic", "trusted": false, "enabled": true, "priority": 10, "sched_models": ["model-a", "model-b"], "fetched_models": [], "model_context": {}}],
+  "aliases": []
+}
+```
+
+Config location: `%APPDATA%\LLMGateway\config.json` (Windows) / `~/.config/llm-gateway/config.json`
+(Linux). Portable via env `LLM_GATEWAY_HOME`.
+
+## API endpoints
+
+- `GET  /v1/models` — model list (auto + union of scheduled). 401 without key.
+- `POST /v1/chat/completions` — OpenAI-compatible, `stream: true` SSE passthrough.
+- `POST /v1/embeddings` — embeddings passthrough (OpenAI-compatible providers only).
+- `POST /v1/messages` — Anthropic Messages dialect (Claude clients), auto-converted.
+- `GET  /health` — `{"ok": true, "version": ..., "uptime": ...}` (no auth).
+- Auth: `Authorization: Bearer <sk-lg-key>`.
+
+Panel endpoints under `/api/*`: state, providers CRUD, reorder, settings, regenerate key/port,
+export/import config, window control.
+
+## Run
+
+```bash
+python main.py             # desktop window
+python main.py --browser   # open panel in browser
+python main.py --no-ui     # headless service
+pip install -r requirements.txt pywebview   # deps
+```
+
+Build: `build_windows.bat` (PyInstaller onefile) → `dist/llm-gateway.exe`; `build_linux.sh` → `dist/llm-gateway`.
+
+## Test
+
+```bash
+python tests/smoke.py   # spins mock upstream + gateway; asserts auth/dispatch/cooldown/streaming/trusted-routing
+```
+
+## License
+
+MIT.

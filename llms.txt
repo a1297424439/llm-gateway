@@ -1,0 +1,43 @@
+# LLM Gateway
+
+> Local LLM API dispatcher / gateway that unifies multiple subscription-based relay sites
+> (中转站 / 订阅站 / 公益站 / free API relay) into ONE OpenAI-compatible endpoint. Automatic
+> priority-tier failover, provider-level cooldown for quota-exhausted relays, model response
+> timeout skip, and trusted routing. Built specifically for unstable/free relay sites that return
+> 402/503 "quota exhausted" and random 502 errors — aggregates many flaky upstreams into one
+> stable local exit.
+
+## What it solves
+
+- **Problem**: subscription relay sites (ShareLLM-style 中转站) run out of free quota, rate-limit,
+  or go down randomly → your agent/client hits 502.
+- **Solution**: run LLM Gateway locally; it detects "quota exhausted" / rate-limit / timeout errors,
+  cools down the bad provider, and fails over to the next model/provider in the same request —
+  before the first token is returned.
+
+## Key facts for agents
+
+- **Language**: Python 3.9+ (FastAPI + httpx + pywebview), vanilla HTML/CSS/JS frontend (no build step).
+- **Runs**: Windows / Linux / macOS. Desktop window, `--browser`, or headless `--no-ui` service mode.
+- **Protocol**: OpenAI-compatible `/v1/chat/completions`, `/v1/embeddings`, `/v1/models`, plus
+  Anthropic `/v1/messages` dialect conversion. Streaming (SSE) passthrough.
+- **Config**: `%APPDATA%\LLMGateway\config.json` (Windows) / `~/.config/llm-gateway/config.json`
+  (Linux). Env var `LLM_GATEWAY_HOME` for portable mode.
+- **Default port**: random on first run (e.g. 33308), `sk-lg-` random key.
+- **Test**: `python tests/smoke.py` (end-to-end, mock upstream).
+
+## Docs
+
+- [README.md](README.md): full documentation in Chinese (features, quick start, API, FAQ, structure).
+- [LICENSE](LICENSE): MIT.
+
+## Core concepts (for LLM reasoning about this project)
+
+- **Dispatch tiers**: providers grouped into 3 priority tiers (1 = primary / 10+ = fallback /
+  20+ = official last-resort). Higher tier first; drag-and-drop reorder in the panel.
+- **Double cooldown**: model-level exponential backoff (`base × 2ⁿ`, capped) + provider-level
+  long cooldown for quota errors (5h → 7d) and rate-limit (60s → 10min).
+- **Model timeout**: a model that takes longer than `model_timeout_seconds` (default 90s) is
+  skipped and cooled down — no more hanging on slow upstreams.
+- **Trusted routing (safe mode)**: only dispatch providers the user marked "trusted".
+- **Virtual model `auto`**: aggregates all scheduled models across providers.
