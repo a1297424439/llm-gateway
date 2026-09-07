@@ -30,6 +30,58 @@ def _port_free(host: str, port: int) -> bool:
             return False
 
 
+def _port_owner_pid(host: str, port: int):
+    """返回占用 host:port 的进程 PID（找不到返回 None）。仅 Windows/Unix 通用。"""
+    import subprocess
+    try:
+        if os.name == "nt":
+            out = subprocess.run(["netstat", "-ano", "-p", "tcp"],
+                                 capture_output=True, text=True, timeout=10).stdout
+            for line in out.splitlines():
+                parts = line.split()
+                if len(parts) >= 5 and parts[0].upper() == "TCP" and parts[1].endswith(f":{port}"):
+                    if parts[3] == "LISTENING":
+                        return int(parts[4])
+        else:
+            out = subprocess.run(["lsof", "-ti", f"tcp:{port}"],
+                                 capture_output=True, text=True, timeout=10).stdout
+            return int(out.strip().split()[0]) if out.strip() else None
+    except Exception:
+        return None
+    return None
+
+
+def _pid_is_gateway(pid: int) -> bool:
+    """判断 PID 对应进程是否就是 llm-gateway 本身（避免误杀无关程序）。"""
+    import subprocess
+    try:
+        if os.name == "nt":
+            out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                                 capture_output=True, text=True, timeout=10).stdout
+            return "llm-gateway" in out.lower()
+        else:
+            with open(f"/proc/{pid}/comm", "r") as f:
+                return "llm-gateway" in f.read().lower()
+    except Exception:
+        return False
+
+
+def _kill_pid(pid: int) -> bool:
+    """强制结束指定 PID 进程。返回是否成功。"""
+    import subprocess
+    try:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/F", "/PID", str(pid)],
+                           capture_output=True, timeout=10)
+            return True
+        else:
+            import signal
+            os.kill(pid, signal.SIGKILL)
+            return True
+    except Exception:
+        return False
+
+
 def _wait_started(srv, timeout: float = 25.0) -> bool:
     t0 = time.time()
     while time.time() - t0 < timeout:
@@ -210,16 +262,35 @@ def main() -> None:
         cfg["server"]["port"] = port
         cfgmod.save()
 
-    # 重启场景：旧进程可能仍短暂占用端口，最多等待 10 秒
+    # 端口处理：被占用时先判断占用者是否就是上一个 llm-gateway 进程。
+    # 是 → 杀掉它继续用原端口；否（用户改了端口被别的程序占用）→ 随机换端口。
     deadline = time.time() + 10
     while not _port_free(host, port) and time.time() < deadline:
         time.sleep(0.4)
     if not _port_free(host, port):
-        newp = cfgmod.random_free_port(host)
-        print(f"[!] 端口 {port} 被占用，自动改用随机新端口 {newp}")
-        cfg["server"]["port"] = newp
-        port = newp
-        cfgmod.save()
+        owner_pid = _port_owner_pid(host, port)
+        if owner_pid and _pid_is_gateway(owner_pid):
+            print(f"[!] 端口 {port} 被上一个 llm-gateway 进程（PID {owner_pid}）占用，正在结束它…")
+            _kill_pid(owner_pid)
+            # 等它释放端口（最多 10 秒）
+            deadline2 = time.time() + 10
+            while not _port_free(host, port) and time.time() < deadline2:
+                time.sleep(0.4)
+            if _port_free(host, port):
+                print(f"[i] 已结束旧进程，继续使用原端口 {port}")
+            else:
+                # 旧进程没杀干净（罕见），退回随机端口
+                newp = cfgmod.random_free_port(host)
+                print(f"[!] 旧进程未能释放端口，改用随机新端口 {newp}")
+                cfg["server"]["port"] = newp
+                port = newp
+                cfgmod.save()
+        else:
+            newp = cfgmod.random_free_port(host)
+            print(f"[!] 端口 {port} 被其他程序占用（非 llm-gateway），自动改用随机新端口 {newp}")
+            cfg["server"]["port"] = newp
+            port = newp
+            cfgmod.save()
 
     import uvicorn
     from app import server
