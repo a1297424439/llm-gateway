@@ -247,6 +247,11 @@ const CHANGES = {
       else { toast(r.error || "设置失败", "err"); el.checked = !el.checked; }
     } catch (e) { toast(e.message, "err"); el.checked = !el.checked; }
   },
+  async "settings-text"(d, el) {
+    const v = (el.value || "").trim();
+    await saveSettings({ [d.sect]: { [d.field]: v } });
+    if (d.sect === "proxy") toast(v ? "代理出口已设为 " + v : "代理已关闭（全直连）");
+  },
   "provider-enabled"(d, el) {
     api("/api/providers/" + d.id, { method: "PUT", body: JSON.stringify({ enabled: el.checked }) })
       .then(async () => { toast(el.checked ? "渠道已启用" : "渠道已停用"); await refresh(); })

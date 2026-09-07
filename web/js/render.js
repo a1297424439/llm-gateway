@@ -242,6 +242,15 @@ function providerModal(existing) {
       </div>
       <div class="form-item"><div class="rowlike"><span><b style="font-size:13.5px">可信渠道</b><div class="hint">标记为可信后可在安全路由（信任路由）模式下被调度，由你决定信任哪些渠道</div></span>
         <label class="switch"><input type="checkbox" id="pf-trusted" ${existing && (existing.trusted ?? existing.domestic) ? "checked" : ""}><span class="knob"></span></label></div></div>
+      <div class="form-item">
+        <label>走代理</label>
+        <select id="pf-proxy">
+          <option value="" ${!existing || (existing.proxy === "" || existing.proxy == null) ? "selected" : ""}>自动判断（海外名单 + 探测）</option>
+          <option value="true" ${existing && existing.proxy === true ? "selected" : ""}>强制走代理</option>
+          <option value="false" ${existing && existing.proxy === false ? "selected" : ""}>强制直连</option>
+        </select>
+        <div class="hint">海外渠道自动走代理，国内直连。可手动强制覆盖。</div>
+      </div>
       <div class="form-item"><label>备注（可选）</label><input id="pf-note" value="${esc(existing ? existing.note || "" : "")}"></div>
     </div>
     <div class="modal-btns"><button class="btn btn-plain" id="pf-cancel">取消</button><button class="btn btn-primary" id="pf-save">${existing ? "保存" : "添加"}</button></div>`);
@@ -255,10 +264,12 @@ function providerModal(existing) {
   };
   $("#pf-cancel").onclick = closeModal;
   $("#pf-save").onclick = async () => {
+    const pv = $("#pf-proxy").value;
     const body = {
       name: $("#pf-name").value.trim(), base_url: $("#pf-url").value.trim(),
       api_key: $("#pf-key").value.trim(), adapter: $("#pf-adapter").value,
       trusted: $("#pf-trusted").checked, note: $("#pf-note").value.trim(),
+      proxy: pv === "true" ? true : (pv === "false" ? false : ""),
     };
     if (!body.name || !body.base_url.startsWith("http")) { toast("名称与合法的 Base URL 必填", "err"); return; }
     S.busy = true;

@@ -176,6 +176,7 @@ const VIEWS = {
   settings() {
     const c = cfg();
     const r = c.routing || {}, cd = c.cooldown || {}, sv = c.server || {};
+    const px = c.proxy || {};
     return `
     <div class="view-title fade-in">设置</div>
 
@@ -259,6 +260,10 @@ const VIEWS = {
       <div class="row">
         <div class="row-main"><div class="label">开机自启</div><div class="desc">登录系统后自动在后台启动网关（无界面模式，地址与 Key 不变）</div></div>
         <label class="switch"><input type="checkbox" data-change="autostart" ${S.autostart ? "checked" : ""}><span class="knob"></span></label>
+      </div>
+      <div class="row">
+        <div class="row-main"><div class="label">代理出口</div><div class="desc">海外渠道自动走此代理（留空=全直连）。格式 http://127.0.0.1:端口</div></div>
+        <input type="text" value="${esc(px.url || "")}" placeholder="http://127.0.0.1:7994" data-change="settings-text" data-sect="proxy" data-field="url" style="max-width:260px">
       </div>
       <div class="row">
         <div class="row-main"><div class="label">关于</div><div class="desc">当前版本 <span class="mono">${esc(S.data.version || "")}</span><span id="updateHint"></span></div></div>

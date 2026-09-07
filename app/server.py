@@ -58,6 +58,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import VERSION, adapters, config as cfgmod, presets as preset_mod, router as router_mod
 
+from . import proxy as proxy_mod
+
 from . import state as state_mod
 
 
@@ -112,7 +114,7 @@ async def _probe_provider(pid: str):
 
     try:
 
-        models, ctxmap = await adapters.fetch_models(CLIENT, p)
+        models, ctxmap = await adapters.fetch_models(proxy_mod.client_for(p, CLIENT), p)
 
 
 
@@ -249,6 +251,8 @@ async def lifespan(app: FastAPI):
         state_mod.persist()
 
         await CLIENT.aclose()
+
+        await proxy_mod.close_proxy()
 
 
 
@@ -579,11 +583,12 @@ async def v1_messages(req: Request, _=Depends(gateway_auth)):
         last_provider = cand.provider["id"]
         t0 = time.time()
         usage_box = {}
-        hreq = CLIENT.build_request("POST", adapters.chat_url(cand.provider),
+        _cli = proxy_mod.client_for(cand.provider, CLIENT)
+        hreq = _cli.build_request("POST", adapters.chat_url(cand.provider),
                                     headers=adapters.provider_headers(cand.provider),
                                     json=payload, timeout=_timeout(cfg))
         try:
-            r = await CLIENT.send(hreq)
+            r = await _cli.send(hreq)
             if r.status_code != 200:
                 adapters.raise_for_status(r.status_code, r.text, r.headers)
             if stream:
@@ -861,11 +866,12 @@ async def _attempt_json(cfg: dict, cand, body: dict, endpoint: str = "chat", usa
 
     url = adapters.chat_url(p) if endpoint == "chat" else adapters.embeddings_url(p)
 
-    hreq = CLIENT.build_request("POST", url, headers=adapters.provider_headers(p),
+    _cli = proxy_mod.client_for(p, CLIENT)
+    hreq = _cli.build_request("POST", url, headers=adapters.provider_headers(p),
 
                                 json=payload, timeout=_timeout(cfg))
 
-    r = await CLIENT.send(hreq)
+    r = await _cli.send(hreq)
 
     try:
 
@@ -933,11 +939,12 @@ async def _attempt_stream(cfg: dict, cand, body: dict):
 
     payload = adapters.build_payload(p, body, cand.model)
 
-    hreq = CLIENT.build_request("POST", adapters.chat_url(p), headers=adapters.provider_headers(p),
+    _cli = proxy_mod.client_for(p, CLIENT)
+    hreq = _cli.build_request("POST", adapters.chat_url(p), headers=adapters.provider_headers(p),
 
                                 json=payload, timeout=_timeout(cfg))
 
-    r = await CLIENT.send(hreq, stream=True)
+    r = await _cli.send(hreq, stream=True)
 
     try:
 
@@ -1308,6 +1315,12 @@ async def api_settings(req: Request, _=Depends(api_auth)):
 
                     dst[k] = bool(r[k])
 
+        pr = body.get("proxy")
+        if isinstance(pr, dict):
+            if "url" in pr:
+                cfg["proxy"]["url"] = str(pr["url"]).strip()
+            proxy_mod.invalidate_probe_cache()
+
         c = body.get("cooldown")
 
         if isinstance(c, dict):
@@ -1565,10 +1578,18 @@ async def provider_update(pid: str, req: Request, _=Depends(api_auth)):
         if "domestic" in b and "trusted" not in b:  # 兼容旧前端字段
             b["trusted"] = b["domestic"]
         for k in ("trusted", "enabled"):
-
             if k in b:
-
                 p[k] = bool(b[k])
+
+        # 渠道级代理覆盖：true=走代理 / false=直连 / ""=自动判断（清除手动覆盖）
+        if "proxy" in b:
+            v = b["proxy"]
+            if isinstance(v, bool):
+                p["proxy"] = v
+            elif isinstance(v, str):
+                p["proxy"] = v.strip()
+            else:
+                p["proxy"] = ""
 
         if isinstance(b.get("sched_models"), list):
 
@@ -1672,7 +1693,7 @@ async def provider_refresh(pid: str, _=Depends(api_auth)):
 
     try:
 
-        models, ctxmap = await adapters.fetch_models(CLIENT, p)
+        models, ctxmap = await adapters.fetch_models(proxy_mod.client_for(p, CLIENT), p)
 
 
 
