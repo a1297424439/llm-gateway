@@ -583,6 +583,7 @@ async def v1_messages(req: Request, _=Depends(gateway_auth)):
         last_provider = cand.provider["id"]
         t0 = time.time()
         usage_box = {}
+        payload = adapters.build_payload(cand.provider, body_openai, cand.model)
         _cli = proxy_mod.client_for(cand.provider, CLIENT)
         hreq = _cli.build_request("POST", adapters.chat_url(cand.provider),
                                     headers=adapters.provider_headers(cand.provider),

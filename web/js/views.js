@@ -262,8 +262,8 @@ const VIEWS = {
         <label class="switch"><input type="checkbox" data-change="autostart" ${S.autostart ? "checked" : ""}><span class="knob"></span></label>
       </div>
       <div class="row">
-        <div class="row-main"><div class="label">代理出口</div><div class="desc">海外渠道自动走此代理（留空=全直连）。格式 http://127.0.0.1:端口</div></div>
-        <input type="text" value="${esc(px.url || "")}" placeholder="http://127.0.0.1:7994" data-change="settings-text" data-sect="proxy" data-field="url" style="max-width:260px">
+        <div class="row-main"><div class="label">代理出口</div><div class="desc">海外渠道自动走此代理。留空=自动读取系统代理（Clash/UniClash/V2rayN 等开了系统代理即可）。手动填写则强制用它</div></div>
+        <input type="text" value="${esc(px.url || "")}" placeholder="留空=自动读系统代理" data-change="settings-text" data-sect="proxy" data-field="url" style="max-width:260px">
       </div>
       <div class="row">
         <div class="row-main"><div class="label">关于</div><div class="desc">当前版本 <span class="mono">${esc(S.data.version || "")}</span><span id="updateHint"></span></div></div>

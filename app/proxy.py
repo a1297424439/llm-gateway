@@ -90,12 +90,45 @@ def _persist():
 
 
 def proxy_url() -> str:
-    """全局代理地址（空字符串=未配置，全直连）。"""
+    """全局代理地址（空字符串=全直连）。
+
+    解析优先级：
+    1. 手动配置 proxy.url 非空 → 直接用（手动覆盖最高优先）。
+    2. proxy.url 为空 → 自动读 Windows 系统代理（注册表 ProxyServer），
+       任何代理软件（Clash Verge/UniClash/V2rayN/SSTAP 等）开了「系统代理」
+       都会写这个键，从而自动拿到正确端口，不依赖具体软件。
+    3. 都没有 → 返回空（全直连）。
+    """
     try:
         u = (cfgmod.cfg().get("proxy") or {}).get("url") or ""
-        return str(u).strip()
+        u = str(u).strip()
+        if u:
+            return u
     except Exception:
-        return ""
+        pass
+
+    # 自动探测 Windows 系统代理（仅 Windows）
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                            r"Software\Microsoft\Windows\CurrentVersion\Internet Settings") as k:
+            enabled, _ = winreg.QueryValueEx(k, "ProxyEnable")
+            if enabled:
+                server, _ = winreg.QueryValueEx(k, "ProxyServer")
+                server = str(server).strip()
+                if server:
+                    if "=" in server:  # 形如 "http=127.0.0.1:7890;https=..."
+                        for part in server.split(";"):
+                            if part.strip().lower().startswith("http="):
+                                server = part.split("=", 1)[1].strip()
+                                break
+                    if server and "://" not in server:
+                        server = "http://" + server
+                    return server
+    except Exception:
+        pass
+
+    return ""
 
 
 def _overseas(host: str) -> bool:
@@ -158,7 +191,7 @@ def _spawn_reprobe(host: str):
             with _lock:
                 _inflight.discard(host)
 
-    loop.create_task(_job)
+    loop.create_task(_job())
 
 
 def should_use_proxy(provider: dict) -> bool:
