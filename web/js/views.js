@@ -243,7 +243,7 @@ const VIEWS = {
       </div>`).join("")}
       <div class="row" style="flex-direction:column;align-items:stretch">
         <div class="row-main"><div class="label">敏感词库（L2）</div><div class="desc">自己公司 / 项目 / 客户名等，绝对精确、占位符全局稳定（多轮对话一致）。每行一条：<span class="mono">词条 | 类别</span>，类别支持 公司/项目/人名/地名/敏感，可省略</div></div>
-        <textarea rows="4" data-change="privacy-glossary" placeholder="某检测中心有限公司 | 公司&#10;某医院住院楼 | 项目&#10;张三 | 人名" style="width:100%;margin-top:8px;font-size:12.5px">${esc(glossaryText)}</textarea>
+        <textarea rows="4" data-change="privacy-glossary" placeholder="某科技有限公司 | 公司&#10;某医院住院楼 | 项目&#10;张三 | 人名" style="width:100%;margin-top:8px;font-size:12.5px">${esc(glossaryText)}</textarea>
       </div>
       <div class="row" style="flex-direction:column;align-items:stretch">
         <div class="row-main"><div class="label">自定义规则（正则）</div><div class="desc">批量匹配编号 / 单号 / 地址一类内容。每行一条：<span class="mono">re:正则</span>（推荐），纯文字则按字面精确匹配。例：<span class="mono">re:[A-Z]{3,6}-\d{4}-\d+</span>、<span class="mono">re:[\\u4e00-\\u9fa5]{2,12}(路|街|大道)\\d+号</span></div></div>
