@@ -58,8 +58,8 @@ function renderTop() {
   $("#verText").textContent = "LLM Gateway" + (S.data ? " · v" + S.data.version : "");
   const b = $("#modeBadge");
   const mode = cfg().mode;
-  b.textContent = mode === "safe" ? "安全路由" : "智能路由";
-  b.className = "badge " + (mode === "safe" ? "badge-green" : "badge-blue");
+  b.textContent = mode === "safe" ? "安全路由" : mode === "mask" ? "脱密路由" : "智能路由";
+  b.className = "badge " + (mode === "safe" ? "badge-green" : mode === "mask" ? "badge-purple" : "badge-blue");
 }
 function renderTabbar() {
   $("#tabbar").innerHTML = TABS.map(t =>
@@ -121,6 +121,8 @@ function buildCurl(url, key, model) {
 }
 
 function modeDesc(m) {
+  if (m === "mask")
+    return "脱密路由：全部启用渠道按档位参与调度；发给普通（非可信）渠道前自动脱密——密钥/证件号（正则）、敏感词库、人名/公司实体识别替换为占位符，响应返回本机时自动回填；可信渠道按原文转发。";
   return m === "safe"
     ? "安全路由（信任路由）：仅使用你标记为「可信」的渠道转发请求，其余渠道一律不调度。"
     : "智能路由：按档位优先级自动调度全部启用渠道，失败自动切换到下一档，并加入冷却池。";
@@ -156,6 +158,7 @@ function providerCard(p, tierIdx) {
         <div class="provider-title">${esc(p.name)}
           <span class="badge ${(p.trusted ?? p.domestic) ? "badge-green" : "badge-gray"}">${(p.trusted ?? p.domestic) ? "可信渠道" : "普通渠道"}</span>
           <span class="badge badge-blue">${p.adapter === "anthropic" ? "Anthropic" : "OpenAI 兼容"}</span>
+          ${cfg().mode === "mask" && !(p.trusted ?? p.domestic) ? '<span class="badge badge-purple">脱密转发</span>' : ""}
           ${p.enabled ? "" : '<span class="badge badge-orange">已停用</span>'}
         </div>
         <div class="provider-url">${esc(p.base_url)}</div>

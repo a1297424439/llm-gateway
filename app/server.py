@@ -60,6 +60,8 @@ from . import VERSION, adapters, config as cfgmod, presets as preset_mod, router
 
 from . import proxy as proxy_mod
 
+from . import privacy as privacy_mod
+
 from . import state as state_mod
 
 
@@ -560,6 +562,8 @@ async def v1_messages(req: Request, _=Depends(gateway_auth)):
     cooldown_cfg = cfg.get("cooldown") or {}
     base = max(1, int(cooldown_cfg.get("base_seconds") or 60))
     maxs = max(base, int(cooldown_cfg.get("max_seconds") or 1800))
+    ms = privacy_mod.make_session(cfg)
+    _masked_cache: dict = {}
 
     attempts_log = []
     tried = 0
@@ -583,7 +587,13 @@ async def v1_messages(req: Request, _=Depends(gateway_auth)):
         last_provider = cand.provider["id"]
         t0 = time.time()
         usage_box = {}
-        payload = adapters.build_payload(cand.provider, body_openai, cand.model)
+        if ms is not None and privacy_mod.should_mask(cand.provider):
+            pb = _masked_cache.get(cand.provider["id"])
+            if pb is None:
+                pb = _masked_cache[cand.provider["id"]] = privacy_mod.mask_body(ms, body_openai)
+        else:
+            pb = body_openai
+        payload = adapters.build_payload(cand.provider, pb, cand.model)
         _cli = proxy_mod.client_for(cand.provider, CLIENT)
         hreq = _cli.build_request("POST", adapters.chat_url(cand.provider),
                                     headers=adapters.provider_headers(cand.provider),
@@ -594,6 +604,7 @@ async def v1_messages(req: Request, _=Depends(gateway_auth)):
                 adapters.raise_for_status(r.status_code, r.text, r.headers)
             if stream:
                 conv = anthropic_compat.StreamToAnthropic(str(body.get("model") or cand.model))
+                sr = privacy_mod.StreamRestorer(ms)
                 state_mod.mark_success(cand.key)
                 state_mod.provider_mark_success(cand.provider["id"])
                 state_mod.log_request(ok=True, ms=int((time.time() - t0) * 1000), stream=True,
@@ -615,7 +626,8 @@ async def v1_messages(req: Request, _=Depends(gateway_auth)):
                                 if data == "[DONE]":
                                     break
                                 try:
-                                    evs = conv.feed(json.loads(data))
+                                    ev = json.loads(sr.feed(data))
+                                    evs = conv.feed(ev)
                                 except Exception:
                                     continue
                                 for e in evs:
@@ -630,7 +642,7 @@ async def v1_messages(req: Request, _=Depends(gateway_auth)):
                 return StreamingResponse(gen(), media_type="text/event-stream",
                                          headers={"Cache-Control": "no-cache",
                                                   "X-Accel-Buffering": "no"})
-            data = r.json()
+            data = privacy_mod.restore_out(ms, r.json())
             out = anthropic_compat.openai_to_anthropic(data, str(body.get("model") or cand.model))
             state_mod.mark_success(cand.key)
             state_mod.provider_mark_success(cand.provider["id"])
@@ -723,6 +735,26 @@ async def _execute(cfg: dict, sel, body: dict, stream: bool, endpoint: str = "ch
 
     maxs = max(base, int(cfg["cooldown"].get("max_seconds") or 1800))
 
+    ms = privacy_mod.make_session(cfg)
+
+    _masked_cache: dict = {}
+
+    def _body_for(provider: dict):
+
+        """脱密路由下：普通（非可信）渠道用脱密副本，可信渠道用原文。"""
+
+        if ms is None or not privacy_mod.should_mask(provider):
+
+            return body
+
+        pid = provider.get("id")
+
+        if pid not in _masked_cache:
+
+            _masked_cache[pid] = privacy_mod.mask_body(ms, body)
+
+        return _masked_cache[pid]
+
 
 
     attempts_log = []
@@ -777,11 +809,11 @@ async def _execute(cfg: dict, sel, body: dict, stream: bool, endpoint: str = "ch
 
             if stream:
 
-                resp = await _attempt_stream(cfg, cand, body)
+                resp = await _attempt_stream(cfg, cand, _body_for(cand.provider), ms=ms)
 
             else:
 
-                resp = await _attempt_json(cfg, cand, body, endpoint, usage_box)
+                resp = await _attempt_json(cfg, cand, _body_for(cand.provider), endpoint, usage_box, ms=ms)
 
             state_mod.mark_success(cand.key)
 
@@ -859,7 +891,7 @@ async def _execute(cfg: dict, sel, body: dict, stream: bool, endpoint: str = "ch
 
 
 
-async def _attempt_json(cfg: dict, cand, body: dict, endpoint: str = "chat", usage_box: dict | None = None):
+async def _attempt_json(cfg: dict, cand, body: dict, endpoint: str = "chat", usage_box: dict | None = None, ms=None):
 
     p = cand.provider
 
@@ -928,13 +960,13 @@ async def _attempt_json(cfg: dict, cand, body: dict, endpoint: str = "chat", usa
 
         out = data
 
-    return JSONResponse(out)
+    return JSONResponse(privacy_mod.restore_out(ms, out))
 
 
 
 
 
-async def _attempt_stream(cfg: dict, cand, body: dict):
+async def _attempt_stream(cfg: dict, cand, body: dict, ms=None):
 
     p = cand.provider
 
@@ -979,6 +1011,10 @@ async def _attempt_stream(cfg: dict, cand, body: dict):
 
 
 
+        sr = privacy_mod.StreamRestorer(ms)
+
+        first = sr.feed(first)
+
         if p.get("adapter") == "anthropic":
 
             st = adapters.AnthropicStreamState(cand.model)
@@ -1016,6 +1052,8 @@ async def _attempt_stream(cfg: dict, cand, body: dict):
                     return
 
                 async for pl in agen:
+
+                    pl = sr.feed(pl)
 
                     if p.get("adapter") == "anthropic":
 
@@ -1142,6 +1180,8 @@ async def api_state(_=Depends(api_auth)):
         "config": c,
 
         "urls": info["urls"],
+
+        "privacy_status": {"ner": privacy_mod.ner_name()},
 
         "lan_ip": info["lan_ip"],
 
@@ -1290,9 +1330,84 @@ async def api_settings(req: Request, _=Depends(api_auth)):
 
     def mut(cfg: dict):
 
-        if body.get("mode") in ("smart", "safe"):
+        if body.get("mode") in ("smart", "safe", "mask"):
 
             cfg["mode"] = body["mode"]
+
+        pv = body.get("privacy")
+
+        if isinstance(pv, dict):
+
+            dst = cfg.setdefault("privacy", {})
+
+            if "restore" in pv:
+
+                dst["restore"] = bool(pv["restore"])
+
+            if "ner_entities" in pv:
+
+                dst["ner_entities"] = bool(pv["ner_entities"])
+
+            rl = pv.get("rules")
+
+            if isinstance(rl, dict):
+
+                rd = dst.setdefault("rules", {})
+
+                for k in privacy_mod.RULE_KEYS:
+
+                    if k in rl:
+
+                        rd[k] = bool(rl[k])
+
+            if isinstance(pv.get("extra_words"), list):
+
+                ew = []
+
+                for x in pv["extra_words"][:100]:
+
+                    x = str(x or "").strip()[:300]
+
+                    if not x:
+
+                        continue
+
+                    if x.lower().startswith("re:"):
+
+                        try:
+
+                            re.compile(x[3:])
+
+                        except Exception:
+
+                            continue
+
+                    ew.append(x)
+
+                dst["extra_words"] = ew
+
+            if isinstance(pv.get("glossary"), list):
+
+                gl = []
+
+                for it in pv["glossary"][:500]:
+
+                    if not isinstance(it, dict):
+
+                        continue
+
+                    term = str(it.get("term") or "").strip()[:200]
+
+                    if not term:
+
+                        continue
+
+                    cat = it.get("category")
+
+                    gl.append({"term": term,
+                               "category": cat if cat in privacy_mod.CATEGORY_LABELS else "custom"})
+
+                dst["glossary"] = gl
 
         r = body.get("routing")
 

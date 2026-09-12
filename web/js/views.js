@@ -41,8 +41,9 @@ const VIEWS = {
           </div>
           <div class="desc">已运行 <span id="uptimeText">${up}</span></div>
         </div>
-        <div class="segmented" style="min-width:220px">
-          <button class="seg-btn ${c.mode !== "safe" ? "active" : ""}" data-act="mode-seg" data-mode="smart">智能路由</button>
+        <div class="segmented" style="min-width:330px">
+          <button class="seg-btn ${c.mode !== "safe" && c.mode !== "mask" ? "active" : ""}" data-act="mode-seg" data-mode="smart">智能路由</button>
+          <button class="seg-btn ${c.mode === "mask" ? "active" : ""}" data-act="mode-seg" data-mode="mask">脱密路由</button>
           <button class="seg-btn ${c.mode === "safe" ? "active" : ""}" data-act="mode-seg" data-mode="safe">安全路由</button>
         </div>
       </div>
@@ -176,7 +177,22 @@ const VIEWS = {
   settings() {
     const c = cfg();
     const r = c.routing || {}, cd = c.cooldown || {}, sv = c.server || {};
-    const px = c.proxy || {};
+    const px = c.proxy || {}, pv = c.privacy || {};
+    const pvRules = pv.rules || {};
+    const nerName = ((S.data || {}).privacy_status || {}).ner || "none";
+    const RULE_ROWS = [
+      ["api_keys", "API 密钥 / 令牌", "sk-、JWT、AWS、GitHub、GitLab、Stripe、Slack、SendGrid、npm、HuggingFace 等（gitleaks / llm-guard 规则节选）"],
+      ["key_value_pairs", "密钥键值对", "api_key=…、password: … 这类赋值片段"],
+      ["emails", "邮箱地址", ""],
+      ["phones", "手机号 / 座机", "大陆 11 位手机号、区号-号码格式座机"],
+      ["id_cards", "身份证号", "18 位，含校验位验证，降低误报"],
+      ["uscc", "统一社会信用代码", "18 位，含校验位验证（ISO 7064）"],
+      ["private_keys", "私钥块", "-----BEGIN … PRIVATE KEY----- 整段"],
+      ["bank_cards", "银行卡号", "13–19 位 Luhn 校验（默认关，误伤面较大）"],
+    ];
+    const CAT_CN = { company: "公司", project: "项目", person: "人名", place: "地名", custom: "敏感" };
+    const glossaryText = (pv.glossary || []).map(g =>
+      g.term + (g.category && g.category !== "custom" ? " | " + (CAT_CN[g.category] || "敏感") : "")).join("\n");
     return `
     <div class="view-title fade-in">设置</div>
 
@@ -207,6 +223,31 @@ const VIEWS = {
       <div class="row">
         <div class="row-main"><div class="label">模型响应超时（秒）</div><div class="desc">单个模型超过此时间未响应即跳过、进冷却换下一个；默认 90 秒覆盖 99% 正常响应（实测 p95≈38s）</div></div>
         <input type="number" min="10" max="600" value="${r.model_timeout_seconds ?? 90}" data-change="settings-num" data-sect="routing" data-field="model_timeout_seconds">
+      </div>
+    </div>
+
+    <div class="card fade-in">
+      <div class="card-header"><div><div class="card-title">脱密路由</div><div class="card-sub">模式在「概览」页切换：发给普通渠道前先脱密，可信渠道按原文转发，响应回本机时自动回填</div></div></div>
+      <div class="row">
+        <div class="row-main"><div class="label">响应回填</div><div class="desc">把响应里的 [SEC-1]、[公司2] 等占位符还原成真实内容（只发生在返回本机的路上，真实值不出网）</div></div>
+        <label class="switch"><input type="checkbox" data-change="privacy-bool" data-field="restore" ${pv.restore !== false ? "checked" : ""}><span class="knob"></span></label>
+      </div>
+      <div class="row">
+        <div class="row-main"><div class="label">智能实体识别（L3）</div><div class="desc">自动发现未录入词库的人名 / 公司名再脱密。当前引擎：${nerName === "none" ? "未就绪（重启程序自动加载 jieba，或 pip install lac paddlepaddle 升级）" : esc(nerName) + (nerName === "jieba" ? "（pip install lac paddlepaddle 可升级为 LAC，更准）" : "")}</div></div>
+        <label class="switch"><input type="checkbox" data-change="privacy-bool" data-field="ner_entities" ${pv.ner_entities ? "checked" : ""}><span class="knob"></span></label>
+      </div>
+      ${RULE_ROWS.map(([k, label, desc]) => `
+      <div class="row">
+        <div class="row-main"><div class="label">内置规则 · ${label}</div><div class="desc">${desc}</div></div>
+        <label class="switch"><input type="checkbox" data-change="privacy-rule" data-rule="${k}" ${(pvRules[k] === undefined ? k !== "bank_cards" : pvRules[k]) ? "checked" : ""}><span class="knob"></span></label>
+      </div>`).join("")}
+      <div class="row" style="flex-direction:column;align-items:stretch">
+        <div class="row-main"><div class="label">敏感词库（L2）</div><div class="desc">自己公司 / 项目 / 客户名等，绝对精确、占位符全局稳定（多轮对话一致）。每行一条：<span class="mono">词条 | 类别</span>，类别支持 公司/项目/人名/地名/敏感，可省略</div></div>
+        <textarea rows="4" data-change="privacy-glossary" placeholder="某检测中心有限公司 | 公司&#10;某医院住院楼 | 项目&#10;张三 | 人名" style="width:100%;margin-top:8px;font-size:12.5px">${esc(glossaryText)}</textarea>
+      </div>
+      <div class="row" style="flex-direction:column;align-items:stretch">
+        <div class="row-main"><div class="label">自定义规则（正则）</div><div class="desc">批量匹配编号 / 单号 / 地址一类内容。每行一条：<span class="mono">re:正则</span>（推荐），纯文字则按字面精确匹配。例：<span class="mono">re:[A-Z]{3,6}-\d{4}-\d+</span>、<span class="mono">re:[\\u4e00-\\u9fa5]{2,12}(路|街|大道)\\d+号</span></div></div>
+        <textarea rows="3" data-change="privacy-extra" placeholder="ABCD-[A-Z0-9-]+&#10;合同编号[A-Z]\\d{4}" style="width:100%;margin-top:8px;font-size:12.5px">${esc((pv.extra_words || []).join("\n"))}</textarea>
       </div>
     </div>
 

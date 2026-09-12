@@ -207,6 +207,11 @@ def should_use_proxy(provider: dict) -> bool:
     if not host:
         return False
 
+    # 1.5 本机回环渠道（ollama 等本地模型服务）永远直连，
+    #     否则探测 443 失败会被误判走代理，再被系统代理拒绝（HTTP 502）。
+    if host == "localhost" or host.startswith("127.") or host == "::1":
+        return False
+
     # 2. 规则快判：海外名单
     if _overseas(host):
         return True
@@ -250,7 +255,7 @@ def client_for(provider: dict, direct_client):
             except Exception:
                 pass
         _PROXY_CLIENT = httpx.AsyncClient(
-            proxies=url,
+            proxy=url,  # httpx>=0.28 移除了 proxies=；proxy= 在 0.26+ 均可用
             limits=httpx.Limits(max_connections=64, max_keepalive_connections=16),
             timeout=httpx.Timeout(connect=15, read=120, write=60, pool=10),
         )

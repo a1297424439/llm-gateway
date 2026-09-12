@@ -95,6 +95,18 @@ def defaults() -> dict:
                      "provider_base_seconds": 18000, "provider_max_seconds": 604800},
         "aggregate": {"name": "auto", "min_context": 1000000, "per_provider": 3},
         "proxy": {"url": ""},  # 代理出口：空=自动读系统代理(任何代理软件)；填了就强制用它
+        "privacy": {
+            # 脱密路由（mode="mask"）的配置
+            "restore": True,          # 响应回填：占位符还原为真实内容再返回本机
+            "ner_entities": False,    # L3 智能实体识别（jieba 内置；装 LAC 更准）
+            "rules": {                # L1 内置正则规则开关
+                "api_keys": True, "key_value_pairs": True, "emails": True,
+                "phones": True, "id_cards": True, "uscc": True,
+                "private_keys": True, "bank_cards": False,
+            },
+            "glossary": [],           # L2 敏感词库：[{term, category}]
+            "extra_words": [],        # 自定义正则/字面词：re: 前缀=正则，其余=字面词
+        },
         "providers": [],   # 渠道（网站 API）
         "aliases": [],     # 别名映射：统一模型名 -> [(provider, 上游模型, 优先级)]
     }

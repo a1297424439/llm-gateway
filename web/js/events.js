@@ -61,7 +61,10 @@ const ACTIONS = {
     try { await api("/api/server/restart", { method: "POST" }); toast("正在重启…"); }
     catch (e) { toast(e.message, "err"); }
   },
-  async "mode-seg"(d) { await saveSettings({ mode: d.mode }); toast(d.mode === "safe" ? "已切换到安全路由（仅可信渠道）" : "已切换到智能路由"); },
+  async "mode-seg"(d) {
+    await saveSettings({ mode: d.mode });
+    toast({ smart: "已切换到智能路由", mask: "已切换到脱密路由（普通渠道自动脱密，可信渠道原文）", safe: "已切换到安全路由（仅可信渠道）" }[d.mode] || "已切换");
+  },
   async "host-seg"(d) { await saveSettings({ server: { host: d.host } }); },
   "provider-add"() { providerModal(null); },
   "provider-edit"(d) { const p = (cfg().providers || []).find(x => x.id === d.id); if (p) providerModal(p); },
@@ -240,6 +243,25 @@ const ACTIONS = {
 };
 
 const CHANGES = {
+  async "privacy-bool"(d, el) { await saveSettings({ privacy: { [d.field]: el.checked } }); },
+  async "privacy-rule"(d, el) { await saveSettings({ privacy: { rules: { [d.rule]: el.checked } } }); },
+  async "privacy-glossary"(d, el) {
+    const CN2EN = { "公司": "company", "项目": "project", "人名": "person", "地名": "place", "敏感": "custom" };
+    const glossary = [], extra = [];
+    for (const l of (el.value || "").split(/\n+/).map(s => s.trim()).filter(Boolean)) {
+      if (/^re:/i.test(l)) { extra.push(l); continue; }
+      const parts = l.split(/[|｜]/);
+      const term = (parts[0] || "").trim();
+      if (term) glossary.push({ term, category: CN2EN[(parts[1] || "").trim()] || "custom" });
+    }
+    await saveSettings({ privacy: { glossary } });
+    toast(`敏感词库已保存（${glossary.length} 条）`);
+  },
+  async "privacy-extra"(d, el) {
+    const extra = (el.value || "").split(/\n+/).map(s => s.trim()).filter(Boolean);
+    await saveSettings({ privacy: { extra_words: extra } });
+    toast(`自定义规则已保存（${extra.length} 条）`);
+  },
   async "autostart"(d, el) {
     try {
       const r = await api("/api/autostart", { method: "POST", body: JSON.stringify({ enabled: el.checked }) });

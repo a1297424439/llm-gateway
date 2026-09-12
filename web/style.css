@@ -250,6 +250,7 @@ select { appearance: none; -webkit-appearance: none;
 .badge-orange { background: var(--orange-soft); color: var(--orange); }
 .badge-red { background: var(--red-soft); color: var(--red); }
 .badge-gray { background: var(--fill); color: var(--text2); }
+.badge-purple { background: rgba(175, 82, 222, .14); color: var(--purple); }
 
 /* ---------------- 统计格子 ---------------- */
 .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }

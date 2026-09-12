@@ -13,6 +13,7 @@ python -m PyInstaller --noconfirm --clean --onefile --noconsole --icon icon.ico 
   --collect-all pythonnet ^
   --collect-all pystray ^
   --collect-all pillow ^
+  --collect-all jieba ^
   --hidden-import clr ^
   --hidden-import webview.platforms.edgechromium ^
   --hidden-import webview.platforms.winforms ^
