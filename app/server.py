@@ -16,6 +16,8 @@ import asyncio
 
 import copy
 
+import hashlib
+
 import hmac
 
 import json
@@ -382,6 +384,149 @@ def _gw_error(status: int, message: str, extra=None) -> JSONResponse:
 
 
 
+# ---------------- AI 实体发现（路由时自动学习） ----------------
+
+_disc_fail_until = 0.0
+
+_disc_seen: dict = {}
+
+_disc_lock = threading.Lock()
+
+_DISCOVER_TIMEOUT = 12      # 单次发现调用的超时（秒）；失败/超时不阻塞转发
+_DISCOVER_COOLDOWN = 300    # 发现失败后的暂停窗口（秒）
+_DISCOVER_TEXT_CAP = 4000   # 每个请求参与扫描的最大文本长度
+
+
+def _pick_discover_provider(cfg: dict, pid: str = ""):
+
+    """挑一个可信渠道做实体识别（仅 trusted/domestic + 启用 + 有调度模型 + 非冷却）。"""
+
+    for p in cfg.get("providers") or []:
+
+        if not p.get("enabled", True) or not (p.get("trusted") or p.get("domestic")):
+
+            continue
+
+        if not (p.get("sched_models") or []):
+
+            continue
+
+        pblocked, _ = state_mod.provider_blocked(p["id"])
+
+        if pblocked:
+
+            continue
+
+        if not pid or p["id"] == pid:
+
+            return p
+
+    return None
+
+
+
+async def _maybe_discover(cfg: dict, body: dict) -> None:
+
+    """脱密路由 + 实体发现开启时：把请求文本发给可信渠道识别实体，结果进学习词库。
+
+    同文本（哈希）不重复扫描；失败进入暂停窗口；任何异常都不影响正常转发。
+
+    """
+
+    global _disc_fail_until
+
+    pv = cfg.get("privacy") or {}
+
+    if cfg.get("mode") != "mask" or not pv.get("discover_enabled"):
+
+        return
+
+    if time.time() < _disc_fail_until:
+
+        return
+
+    text = privacy_mod.body_text(body, _DISCOVER_TEXT_CAP)
+
+    if len(text) < 2:
+
+        return
+
+    h = hashlib.sha1(text.encode("utf-8", "ignore")).hexdigest()
+
+    with _disc_lock:
+
+        if h in _disc_seen:
+
+            return
+
+    prov = _pick_discover_provider(cfg, str(pv.get("discover_provider_id") or ""))
+
+    if prov is None:
+
+        return
+
+    model = (prov.get("sched_models") or ["auto"])[0]
+
+    payload = {"model": model,
+
+               "messages": [{"role": "user",
+
+                             "content": privacy_mod.DISCOVER_PROMPT.format(text=text)}],
+
+               "temperature": 0, "stream": False}
+
+    try:
+
+        _cli = proxy_mod.client_for(prov, CLIENT)
+
+        hreq = _cli.build_request("POST", adapters.chat_url(prov),
+
+                                  headers=adapters.provider_headers(prov),
+
+                                  json=payload, timeout=_DISCOVER_TIMEOUT)
+
+        r = await _cli.send(hreq)
+
+        if r.status_code != 200:
+
+            raise adapters.UpstreamError(f"HTTP {r.status_code}", status=r.status_code)
+
+        data = r.json()
+
+        content = ""
+
+        try:
+
+            content = data["choices"][0]["message"]["content"] or ""
+
+        except Exception:
+
+            pass
+
+        added = privacy_mod.learned_add(
+
+            [(c["term"], c["category"]) for c in privacy_mod.parse_candidates(content)])
+
+        if added:
+
+            state_mod.log_request(ok=True, ms=0, stream=False, alias="实体发现",
+
+                                  provider=prov.get("name"), model=f"{model}（+{added} 词）")
+
+        with _disc_lock:
+
+            if len(_disc_seen) > 800:
+
+                _disc_seen.clear()
+
+            _disc_seen[h] = time.time()
+
+    except Exception:
+
+        _disc_fail_until = time.time() + _DISCOVER_COOLDOWN
+
+
+
 
 
 def lan_ip() -> str:
@@ -562,6 +707,7 @@ async def v1_messages(req: Request, _=Depends(gateway_auth)):
     cooldown_cfg = cfg.get("cooldown") or {}
     base = max(1, int(cooldown_cfg.get("base_seconds") or 60))
     maxs = max(base, int(cooldown_cfg.get("max_seconds") or 1800))
+    await _maybe_discover(cfg, body)
     ms = privacy_mod.make_session(cfg)
     _masked_cache: dict = {}
 
@@ -734,6 +880,8 @@ async def _execute(cfg: dict, sel, body: dict, stream: bool, endpoint: str = "ch
     base = max(1, int(cfg["cooldown"].get("base_seconds") or 60))
 
     maxs = max(base, int(cfg["cooldown"].get("max_seconds") or 1800))
+
+    await _maybe_discover(cfg, body)
 
     ms = privacy_mod.make_session(cfg)
 
@@ -1181,7 +1329,9 @@ async def api_state(_=Depends(api_auth)):
 
         "urls": info["urls"],
 
-        "privacy_status": {"ner": privacy_mod.ner_name()},
+        "privacy_status": {"ner": privacy_mod.ner_name(),
+                           "learned": len(privacy_mod.learned_terms()),
+                           "learned_terms": privacy_mod.learned_terms()},
 
         "lan_ip": info["lan_ip"],
 
@@ -1202,6 +1352,150 @@ async def api_state(_=Depends(api_auth)):
     }
 
 
+
+
+
+@app.post("/api/privacy/discover")
+
+async def privacy_discover(req: Request, _=Depends(api_auth)):
+
+    """AI 找敏感词：把用户提供的文本发给可信渠道，返回词库候选。
+
+    只允许可信渠道（trusted/domestic）——与脱密路由下可信渠道收到原文的信任边界一致。
+
+    """
+
+    try:
+
+        body = await req.json()
+
+    except Exception:
+
+        return _gw_error(400, "请求体不是合法 JSON")
+
+    text = str((body or {}).get("text") or "").strip()
+
+    if not text:
+
+        return _gw_error(400, "文本为空")
+
+    if len(text) > 8000:
+
+        text = text[:8000]
+
+    cfg = cfgmod.cfg()
+
+    pid = str((body or {}).get("provider_id") or "")
+
+    prov = None
+
+    for p in cfg.get("providers") or []:
+
+        if not p.get("enabled", True) or not (p.get("trusted") or p.get("domestic")):
+
+            continue
+
+        if not (p.get("sched_models") or []):
+
+            continue
+
+        pblocked, _ = state_mod.provider_blocked(p["id"])
+
+        if pblocked:
+
+            continue
+
+        if not pid or p["id"] == pid:
+
+            prov = p
+
+            break
+
+    if prov is None:
+
+        return _gw_error(400, "没有可用的可信渠道（AI 找敏感词只发给标记为「可信」的渠道）")
+
+    prompt = privacy_mod.DISCOVER_PROMPT.format(text=text)
+
+    model = (prov.get("sched_models") or ["auto"])[0]
+
+    payload = {"model": model, "messages": [{"role": "user", "content": prompt}],
+
+               "temperature": 0, "stream": False}
+
+    _cli = proxy_mod.client_for(prov, CLIENT)
+
+    t0 = time.time()
+
+    try:
+
+        hreq = _cli.build_request("POST", adapters.chat_url(prov),
+
+                                  headers=adapters.provider_headers(prov),
+
+                                  json=payload, timeout=90)
+
+        r = await _cli.send(hreq)
+
+        if r.status_code != 200:
+
+            adapters.raise_for_status(r.status_code, r.text, r.headers)
+
+        data = r.json()
+
+        content = ""
+
+        try:
+
+            content = data["choices"][0]["message"]["content"] or ""
+
+        except Exception:
+
+            pass
+
+        cands = privacy_mod.parse_candidates(content)
+
+        state_mod.mark_success(f"{prov['id']}::{model}")
+
+        state_mod.provider_mark_success(prov["id"])
+
+        state_mod.log_request(ok=True, ms=int((time.time() - t0) * 1000), stream=False,
+
+                              alias="AI找敏感词", provider=prov.get("name"), model=model)
+
+        return {"ok": True, "provider": prov.get("name"), "model": model, "candidates": cands}
+
+    except adapters.UpstreamError as e:
+
+        return _gw_error(502, f"分析失败（{prov.get('name')}）：{str(e)[:200]}")
+
+    except httpx.HTTPError as e:
+
+        return _gw_error(502, f"网络失败（{prov.get('name')}）：{str(e)[:200]}")
+
+
+
+@app.post("/api/privacy/learned/delete")
+
+async def privacy_learned_delete(req: Request, _=Depends(api_auth)):
+
+    try:
+
+        body = await req.json()
+
+    except Exception:
+
+        body = {}
+
+    return {"ok": privacy_mod.learned_remove(str((body or {}).get("term") or ""))}
+
+
+
+@app.post("/api/privacy/learned/clear")
+
+async def privacy_learned_clear(_=Depends(api_auth)):
+
+    return {"ok": True, "cleared": privacy_mod.learned_clear()}
 
 
 
@@ -1347,6 +1641,14 @@ async def api_settings(req: Request, _=Depends(api_auth)):
             if "ner_entities" in pv:
 
                 dst["ner_entities"] = bool(pv["ner_entities"])
+
+            if "discover_enabled" in pv:
+
+                dst["discover_enabled"] = bool(pv["discover_enabled"])
+
+            if "discover_provider_id" in pv:
+
+                dst["discover_provider_id"] = str(pv["discover_provider_id"] or "").strip()[:100]
 
             rl = pv.get("rules")
 

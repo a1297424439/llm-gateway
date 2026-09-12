@@ -61,6 +61,18 @@ const ACTIONS = {
     try { await api("/api/server/restart", { method: "POST" }); toast("正在重启…"); }
     catch (e) { toast(e.message, "err"); }
   },
+  "privacy-collapse"() {
+    S.collapsedPrivacy = !S.collapsedPrivacy;
+    localStorage.setItem("gw_privacy_collapsed", S.collapsedPrivacy ? "1" : "0");
+    render();
+  },
+  "privacy-discover"() { discoverModal(); },
+  "privacy-learned-view"() { learnedModal(); },
+  async "privacy-learned-clear"() {
+    if (!(await confirmDlg("清空学习词库？", "AI 实体发现自动积累的全部实体将被删除，手工词库不受影响。", "清空"))) return;
+    try { await api("/api/privacy/learned/clear", { method: "POST", body: "{}" }); toast("学习词库已清空"); await refresh(); }
+    catch (e) { toast(e.message, "err"); }
+  },
   async "mode-seg"(d) {
     await saveSettings({ mode: d.mode });
     toast({ smart: "已切换到智能路由", mask: "已切换到脱密路由（普通渠道自动脱密，可信渠道原文）", safe: "已切换到安全路由（仅可信渠道）" }[d.mode] || "已切换");
@@ -256,6 +268,10 @@ const CHANGES = {
     }
     await saveSettings({ privacy: { glossary } });
     toast(`敏感词库已保存（${glossary.length} 条）`);
+  },
+  async "privacy-discover-prov"(d, el) {
+    await saveSettings({ privacy: { discover_provider_id: el.value || "" } });
+    toast(el.value ? "检测渠道已固定" : "检测渠道改为自动挑选");
   },
   async "privacy-extra"(d, el) {
     const extra = (el.value || "").split(/\n+/).map(s => s.trim()).filter(Boolean);

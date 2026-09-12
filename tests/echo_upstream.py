@@ -46,6 +46,15 @@ async def chat(req: Request):
     body = await req.json()
     LAST["body"] = body
     content = _last_user_text(body)
+    # AI 找敏感词的假响应：包含合法/重复/坏分类候选，用于测试解析容错
+    if "敏感信息识别助手" in content:
+        cands = [{"term": "某检测科技有限公司", "category": "company"},
+                 {"term": "某住院楼项目", "category": "project"},
+                 {"term": "某检测科技有限公司", "category": "company"},
+                 {"term": "编号123", "category": "weird"}]
+        if "星辰控股集团" in content:
+            cands.insert(0, {"term": "星辰控股集团", "category": "company"})
+        content = "识别结果如下：" + json.dumps(cands, ensure_ascii=False)
     if body.get("stream"):
         async def gen():
             # 按 7 字符分片：保证占位符大概率被切开，验证流式跨事件回填

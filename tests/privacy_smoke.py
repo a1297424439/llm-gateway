@@ -292,6 +292,44 @@ def e2e_tests():
                   {"term": "某公司", "category": "custom"}] and pv2.get("rules", {}).get("bank_cards") is True,
               json.dumps(pv2, ensure_ascii=False)[:200])
 
+        # 9. AI 找敏感词：只发可信渠道 + 候选解析容错
+        r = c.post("/api/privacy/discover", json={"text": "某检测科技有限公司承接了某住院楼项目，编号123。"})
+        d = r.json()
+        ok = (r.status_code == 200 and d.get("ok") and d.get("provider") == "可信渠道"
+              and len(d.get("candidates") or []) == 3
+              and d["candidates"][0] == {"term": "某检测科技有限公司", "category": "company"}
+              and d["candidates"][2] == {"term": "编号123", "category": "custom"})
+        check("AI 找敏感词：可信渠道+候选解析", ok, json.dumps(d, ensure_ascii=False)[:200])
+        sent = last_user(recv(c, ECHO_TRUST))
+        check("AI 找敏感词确实发给了可信渠道", "敏感信息识别助手" in sent, sent[:80])
+        r = c.post("/api/privacy/discover", json={"text": "测试", "provider_id": "p_mask"})
+        check("AI 找敏感词拒绝普通渠道", r.status_code == 400, r.text[:120])
+
+        # 10. 路由时 AI 实体发现：自动学习 → 当轮脱密 → 跨请求生效
+        c.post("/api/settings", json={"mode": "mask", "privacy": {
+            "discover_enabled": True, "discover_provider_id": "p_trust",
+            "glossary": [], "extra_words": []}})
+        c.post("/api/privacy/learned/clear")
+        body10 = {"model": "mock-chat",
+                  "messages": [{"role": "user", "content": "星辰控股集团的新项目进展如何？"}]}
+        r = c.post("/v1/chat/completions", json=body10)
+        up10 = last_user(recv(c, ECHO_MASK))
+        check("发现的新实体当轮已脱密", "星辰控股集团" not in up10 and "[公司" in up10, up10[:150])
+        out10 = r.json()["choices"][0]["message"]["content"]
+        check("学习实体客户端回填", "星辰控股集团" in out10, out10[:150])
+        sent10 = last_user(recv(c, ECHO_TRUST))
+        check("实体发现发给了可信渠道", "星辰控股集团" in sent10 and "敏感信息识别助手" in sent10, sent10[:120])
+        st10 = c.get("/api/state").json()
+        check("学习词库计数与清单", (st10.get("privacy_status") or {}).get("learned", 0) >= 1
+              and "星辰控股集团" in (st10["privacy_status"].get("learned_terms") or {}),
+              json.dumps(st10.get("privacy_status"), ensure_ascii=False)[:200])
+        c.post("/v1/chat/completions", json=body10)
+        up11 = last_user(recv(c, ECHO_MASK))
+        check("学习词库跨请求生效", "星辰控股集团" not in up11 and "[公司" in up11, up11[:150])
+        r = c.post("/api/privacy/learned/clear").json()
+        check("学习词库清空", r.get("cleared", 0) >= 1, json.dumps(r))
+        c.post("/api/settings", json={"privacy": {"discover_enabled": False}})
+
         print(f"\n结果: {len(PASS)} 通过, {len(FAIL)} 失败")
         if FAIL:
             print("失败项:", FAIL)

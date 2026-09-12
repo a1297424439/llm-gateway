@@ -23,6 +23,8 @@ from __future__ import annotations
 import copy
 import json
 import re
+import threading
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from . import ner as ner_mod
@@ -275,6 +277,7 @@ def make_session(cfg: dict) -> Optional[MaskSession]:
             except re.error:
                 continue
     glossary = []
+    manual_terms = set()
     for item in pv.get("glossary") or []:
         term = str((item or {}).get("term") or "").strip()
         if not term:
@@ -285,6 +288,15 @@ def make_session(cfg: dict) -> Optional[MaskSession]:
             esc = r"(?<![A-Za-z0-9])" + esc + r"(?![A-Za-z0-9])"
         try:
             glossary.append((re.compile(esc, re.I if term.isascii() else 0), cat))
+            manual_terms.add(term)
+        except re.error:
+            continue
+    # 学习词库（AI 实体发现自动积累）：手工词库优先，其余全部参与脱密
+    for term, cat in learned_terms().items():
+        if term in manual_terms:
+            continue
+        try:
+            glossary.append((re.compile(re.escape(term)), cat))
         except re.error:
             continue
     # 自定义正则/字面词（extra_words）：re: 前缀 = 正则，否则按字面词处理
@@ -397,3 +409,158 @@ def ner_name() -> str:
         return ner_mod.backend_name()
     except Exception:
         return "none"
+
+
+# ---------------------------------------------------------------- AI 找敏感词
+# 提示词按 GB/T 35273 附录 B 的敏感个人信息分类思路编写，输出收敛为本产品的词库分类。
+DISCOVER_PROMPT = """你是敏感信息识别助手。请从下面这段文本里找出可能属于敏感信息的实体候选，分类列出。
+分类只能用这几个：
+- company：公司 / 单位 / 机构名称
+- project：项目 / 工程 / 业务名称
+- person：人名
+- place：地名 / 地址
+- custom：其他敏感内容（证件号、编号、账号、合同名、卡号等，term 里写出现的原文）
+要求：
+1. 只输出一个 JSON 数组，格式 [{{"term":"实体原文","category":"company"}}]，不要输出任何解释文字。
+2. term 必须是文本中出现的连续原文片段，不要改写、不要概括。
+3. 不要把单独出现的通用词（如"公司""项目""老师"）当实体；不确定就归 custom。
+4. 最多 40 个，按重要性排序。
+参考分类标准：GB/T 35273 个人信息安全规范（身份 / 金融 / 健康 / 行踪等敏感个人信息）。
+文本：
+<<<
+{text}
+>>>"""
+
+
+def parse_candidates(content: str) -> List[Dict[str, str]]:
+    """从模型回复里稳健地解析候选 JSON 数组，容错：多余文字、坏分类、重复、超长。"""
+    if not content:
+        return []
+    s, e = content.find("["), content.rfind("]")
+    if s == -1 or e <= s:
+        return []
+    try:
+        arr = json.loads(content[s:e + 1])
+    except Exception:
+        return []
+    out: List[Dict[str, str]] = []
+    seen = set()
+    for it in arr if isinstance(arr, list) else []:
+        if not isinstance(it, dict):
+            continue
+        term = str(it.get("term") or "").strip()
+        if not term or len(term) > 60 or term in seen:
+            continue
+        cat = it.get("category")
+        seen.add(term)
+        out.append({"term": term, "category": cat if cat in CATEGORY_LABELS else "custom"})
+        if len(out) >= 60:
+            break
+    return out
+
+
+# ---------------------------------------------------------------- 学习词库
+# AI 实体发现在路由时自动积累的实体，持久化到 config.json 同目录，重启不丢。
+_LEARNED: Dict[str, str] = {}
+_LEARNED_LOADED = False
+_LEARNED_LOCK = threading.Lock()
+
+
+def _learned_file() -> Path:
+    try:
+        from . import config as cfgmod
+        return Path(cfgmod.config_path()).parent / "privacy_learned.json"
+    except Exception:
+        return Path("privacy_learned.json")
+
+
+def learned_load() -> None:
+    global _LEARNED_LOADED
+    with _LEARNED_LOCK:
+        if _LEARNED_LOADED:
+            return
+        _LEARNED_LOADED = True
+        try:
+            data = json.loads(_learned_file().read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                for k, v in data.items():
+                    if isinstance(v, str) and v in CATEGORY_LABELS and str(k).strip():
+                        _LEARNED[str(k).strip()[:60]] = v
+        except Exception:
+            pass
+
+
+def _learned_save() -> None:
+    try:
+        _learned_file().write_text(
+            json.dumps(_LEARNED, ensure_ascii=False, indent=1), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def learned_terms() -> Dict[str, str]:
+    learned_load()
+    with _LEARNED_LOCK:
+        return dict(_LEARNED)
+
+
+def learned_add(pairs) -> int:
+    learned_load()
+    changed = 0
+    with _LEARNED_LOCK:
+        for term, cat in pairs or []:
+            term = str(term or "").strip()[:60]
+            if not term or term in _LEARNED:
+                continue
+            _LEARNED[term] = cat if cat in CATEGORY_LABELS else "custom"
+            changed += 1
+    if changed:
+        _learned_save()
+    return changed
+
+
+def learned_remove(term: str) -> bool:
+    learned_load()
+    with _LEARNED_LOCK:
+        gone = _LEARNED.pop(str(term or "").strip(), None) is not None
+    if gone:
+        _learned_save()
+    return gone
+
+
+def learned_clear() -> int:
+    learned_load()
+    with _LEARNED_LOCK:
+        n = len(_LEARNED)
+        _LEARNED.clear()
+    if n:
+        _learned_save()
+    return n
+
+
+def body_text(body: dict, cap: int = 4000) -> str:
+    """抽取请求体里的文本（消息内容 + system），供实体发现扫描。"""
+    parts: List[str] = []
+    total = 0
+
+    def walk(o: Any) -> None:
+        nonlocal total
+        if total >= cap:
+            return
+        if isinstance(o, str):
+            parts.append(o)
+            total += len(o)
+        elif isinstance(o, dict):
+            for v in o.values():
+                walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+
+    msgs = body.get("messages") if isinstance(body.get("messages"), list) else []
+    for m in msgs:
+        if isinstance(m, dict):
+            walk(m.get("content"))
+    if total < cap and isinstance(body.get("system"), str):
+        parts.append(body["system"])
+    return "".join(parts)[:cap]

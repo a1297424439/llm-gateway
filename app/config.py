@@ -106,6 +106,8 @@ def defaults() -> dict:
             },
             "glossary": [],           # L2 敏感词库：[{term, category}]
             "extra_words": [],        # 自定义正则/字面词：re: 前缀=正则，其余=字面词
+            "discover_enabled": False,   # AI 实体发现：路由时把请求文本发给可信渠道自动学习
+            "discover_provider_id": "",  # 检测渠道（仅可信渠道生效；空=自动挑第一个可用的）
         },
         "providers": [],   # 渠道（网站 API）
         "aliases": [],     # 别名映射：统一模型名 -> [(provider, 上游模型, 优先级)]

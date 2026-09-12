@@ -7,6 +7,7 @@ const S = {
   logFilter: "all", expandedProviders: new Set(), expandedLogs: new Set(),
   busy: false, err: null, keyVisible: false,
   collapsedTiers: JSON.parse(localStorage.getItem("gw_collapsed") || "[]"),
+  collapsedPrivacy: localStorage.getItem("gw_privacy_collapsed") !== "0",
   dragId: null, autostart: false,
 };
 const cfg = () => (S.data && S.data.config) || { server: {}, routing: {}, cooldown: {}, providers: [], aliases: [] };

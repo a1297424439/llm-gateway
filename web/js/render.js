@@ -187,6 +187,117 @@ function providerCard(p, tierIdx) {
   </div>`;
 }
 
+/* ============ 学习词库查看 ============ */
+const CAT_CN = { company: "公司", project: "项目", person: "人名", place: "地名", custom: "敏感" };
+function learnedModal() {
+  const terms = ((S.data || {}).privacy_status || {}).learned_terms || {};
+  const list = Object.entries(terms);
+  if (!list.length) { toast("学习词库为空（开启 AI 实体发现后自动积累）"); return; }
+  openModal(`
+    <div class="modal-title">学习词库（${list.length} 条）</div>
+    <div class="modal-msg">AI 实体发现自动积累的实体，与手工词库一起参与脱密。</div>
+    <div style="max-height:40vh;overflow:auto;margin-top:10px">
+    ${list.map(([term, cat]) => `
+      <div style="display:flex;gap:8px;align-items:center;padding:4px 0;border-bottom:1px solid var(--sep)">
+        <span class="badge badge-gray" style="flex:none">${CAT_CN[cat] || "敏感"}</span>
+        <span style="flex:1;word-break:break-all">${esc(term)}</span>
+        <button class="btn btn-sm btn-plain" data-learned-del="${esc(term)}">删除</button>
+      </div>`).join("")}
+    </div>
+    <div class="modal-btns"><button class="btn btn-primary" id="lr-close">关闭</button></div>`);
+  $("#lr-close").onclick = closeModal;
+  $$("#modal-root [data-learned-del]").forEach(btn => {
+    btn.onclick = async () => {
+      try {
+        await api("/api/privacy/learned/delete", { method: "POST", body: JSON.stringify({ term: btn.dataset.learnedDel }) });
+        btn.closest("div").remove();
+        toast("已删除");
+        await refresh();
+      } catch (e) { toast(e.message, "err"); }
+    };
+  });
+}
+
+/* ============ AI 找敏感词 ============ */
+function discoverModal() {
+  const c = cfg();
+  const trusted = (c.providers || []).filter(p =>
+    p.enabled && (p.trusted ?? p.domestic) && (p.sched_models || []).length);
+  if (!trusted.length) { toast("没有启用的可信渠道——AI 找敏感词只会发给「可信」渠道", "err"); return; }
+  openModal(`
+    <div class="modal-title">AI 找敏感词</div>
+    <div class="modal-msg">把一段代表性文本发给<strong>可信渠道</strong>，按敏感个人信息分类列出实体候选，勾选后加入词库。发送前请确认内容可以给该渠道看。</div>
+    <div class="form-grid">
+      <div class="form-item"><label>发送到（仅可信渠道）</label>
+        <select id="pd-prov">${trusted.map(p => `<option value="${esc(p.id)}">${esc(p.name)} / ${esc((p.sched_models || [])[0] || "")}</option>`).join("")}</select>
+      </div>
+      <div class="form-item"><label>文本（最长 8000 字）</label>
+        <textarea id="pd-text" rows="6" placeholder="粘贴一段报告 / 合同 / 邮件等有代表性的内容"></textarea>
+      </div>
+    </div>
+    <div class="modal-btns"><button class="btn btn-plain" id="pd-cancel">取消</button>
+      <button class="btn btn-primary" id="pd-run">分析</button></div>
+    <div id="pd-result"></div>`);
+  $("#pd-cancel").onclick = closeModal;
+  $("#pd-run").onclick = async () => {
+    const text = $("#pd-text").value.trim();
+    if (!text) { toast("先粘一段文本", "err"); return; }
+    const btn = $("#pd-run");
+    btn.disabled = true; btn.textContent = "分析中…";
+    const box = $("#pd-result");
+    try {
+      const r = await api("/api/privacy/discover", {
+        method: "POST",
+        body: JSON.stringify({ text, provider_id: $("#pd-prov").value })
+      });
+      btn.disabled = false; btn.textContent = "重新分析";
+      if (!r.candidates || !r.candidates.length) {
+        box.innerHTML = '<div class="hint" style="padding:8px 0">没识别出候选——换段内容或换个渠道再试</div>';
+        return;
+      }
+      const cats = { company: "公司", project: "项目", person: "人名", place: "地名", custom: "敏感" };
+      box.innerHTML = `
+        <div class="form-item"><label>候选 ${r.candidates.length} 条（来自 ${esc(r.provider)}）　<a href="javascript:void(0)" id="pd-all">全选/反选</a></label>
+        <div style="max-height:34vh;overflow:auto">
+        ${r.candidates.map((cd, i) => `
+          <div style="display:flex;gap:8px;align-items:center;padding:3px 0">
+            <input type="checkbox" class="pd-ck" data-i="${i}" checked style="width:auto">
+            <input type="text" class="pd-term" data-i="${i}" value="${esc(cd.term)}" style="flex:1">
+            <select class="pd-cat" data-i="${i}">
+              ${Object.entries(cats).map(([k, v]) => `<option value="${k}" ${cd.category === k ? "selected" : ""}>${v}</option>`).join("")}
+            </select>
+          </div>`).join("")}
+        </div></div>
+        <div class="modal-btns"><button class="btn btn-plain" id="pd-close">关闭</button>
+          <button class="btn btn-primary" id="pd-save">把选中的加入词库</button></div>`;
+      $("#pd-all").onclick = () => {
+        const all = $$(".pd-ck").every(x => x.checked);
+        $$(".pd-ck").forEach(x => x.checked = !all);
+      };
+      $("#pd-close").onclick = closeModal;
+      $("#pd-save").onclick = async () => {
+        const picked = [];
+        $$(".pd-ck").forEach(ck => {
+          if (!ck.checked) return;
+          const i = ck.dataset.i;
+          const term = (box.querySelector(`.pd-term[data-i="${i}"]`).value || "").trim();
+          if (term) picked.push({ term, category: box.querySelector(`.pd-cat[data-i="${i}"]`).value });
+        });
+        if (!picked.length) { toast("没勾选任何候选", "err"); return; }
+        const cur = (cfg().privacy || {}).glossary || [];
+        const have = new Set(cur.map(g => g.term));
+        const add = picked.filter(g => !have.has(g.term));
+        await saveSettings({ privacy: { glossary: cur.concat(add) } });
+        toast(`词库已更新（新增 ${add.length}，忽略重复 ${picked.length - add.length}）`);
+        closeModal();
+      };
+    } catch (e) {
+      btn.disabled = false; btn.textContent = "分析";
+      toast(e.message, "err");
+    }
+  };
+}
+
 /* ============ 模态框 ============ */
 function openModal(html) {
   const root = $("#modal-root");

@@ -193,6 +193,7 @@ const VIEWS = {
     const CAT_CN = { company: "公司", project: "项目", person: "人名", place: "地名", custom: "敏感" };
     const glossaryText = (pv.glossary || []).map(g =>
       g.term + (g.category && g.category !== "custom" ? " | " + (CAT_CN[g.category] || "敏感") : "")).join("\n");
+    const pvSummary = `模式${c.mode === "mask" ? "脱密" : c.mode === "safe" ? "安全" : "智能"} · 词库 ${(pv.glossary || []).length} 条 · 正则 ${(pv.extra_words || []).length} 条 · 学习 ${((S.data || {}).privacy_status || {}).learned || 0} 条 · 回填${pv.restore !== false ? "开" : "关"}`;
     return `
     <div class="view-title fade-in">设置</div>
 
@@ -227,7 +228,8 @@ const VIEWS = {
     </div>
 
     <div class="card fade-in">
-      <div class="card-header"><div><div class="card-title">脱密路由</div><div class="card-sub">模式在「概览」页切换：发给普通渠道前先脱密，可信渠道按原文转发，响应回本机时自动回填</div></div></div>
+      <div class="card-header" style="cursor:pointer" data-act="privacy-collapse" title="点击展开 / 折叠"><div><div class="card-title">脱密路由 ${S.collapsedPrivacy ? "▸" : "▾"}</div><div class="card-sub">${S.collapsedPrivacy ? pvSummary : "模式在「概览」页切换：发给普通渠道前先脱密，可信渠道按原文转发，响应回本机时自动回填"}</div></div><button class="btn btn-sm btn-plain" data-act="privacy-discover" title="把文本发给可信渠道，识别敏感实体候选加入词库">AI 找敏感词</button></div>
+      ${S.collapsedPrivacy ? "" : `
       <div class="row">
         <div class="row-main"><div class="label">响应回填</div><div class="desc">把响应里的 [SEC-1]、[公司2] 等占位符还原成真实内容（只发生在返回本机的路上，真实值不出网）</div></div>
         <label class="switch"><input type="checkbox" data-change="privacy-bool" data-field="restore" ${pv.restore !== false ? "checked" : ""}><span class="knob"></span></label>
@@ -235,6 +237,24 @@ const VIEWS = {
       <div class="row">
         <div class="row-main"><div class="label">智能实体识别（L3）</div><div class="desc">自动发现未录入词库的人名 / 公司名再脱密。当前引擎：${nerName === "none" ? "未就绪（重启程序自动加载 jieba，或 pip install lac paddlepaddle 升级）" : esc(nerName) + (nerName === "jieba" ? "（pip install lac paddlepaddle 可升级为 LAC，更准）" : "")}</div></div>
         <label class="switch"><input type="checkbox" data-change="privacy-bool" data-field="ner_entities" ${pv.ner_entities ? "checked" : ""}><span class="knob"></span></label>
+      </div>
+      <div class="row">
+        <div class="row-main"><div class="label">AI 实体发现（路由时自动学习）</div><div class="desc">开启后，每个请求的文本会先发给下面的「检测渠道」（仅可信渠道）识别实体，发现的新实体自动进学习词库、当轮即参与脱密，之后永久生效。注意：每个请求会多一次对检测渠道的调用；识别失败会自动跳过、不影响转发</div></div>
+        <label class="switch"><input type="checkbox" data-change="privacy-bool" data-field="discover_enabled" ${pv.discover_enabled ? "checked" : ""}><span class="knob"></span></label>
+      </div>
+      <div class="row">
+        <div class="row-main"><div class="label">检测渠道（仅可信）</div><div class="desc">实体识别用的渠道，只列可信渠道；留空 = 自动挑第一个可用的可信渠道</div></div>
+        <select data-change="privacy-discover-prov" style="max-width:240px">
+          <option value="">自动挑选</option>
+          ${(c.providers || []).filter(p => p.enabled && (p.trusted ?? p.domestic)).map(p => `<option value="${esc(p.id)}" ${pv.discover_provider_id === p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}
+        </select>
+      </div>
+      <div class="row">
+        <div class="row-main"><div class="label">学习词库</div><div class="desc">AI 实体发现自动积累的实体，持久化保存、重启不丢，与词库一起参与脱密</div></div>
+        <div class="btn-row">
+          <button class="btn btn-sm btn-plain" data-act="privacy-learned-view">查看（${((S.data || {}).privacy_status || {}).learned || 0}）</button>
+          <button class="btn btn-sm btn-plain" data-act="privacy-learned-clear">清空</button>
+        </div>
       </div>
       ${RULE_ROWS.map(([k, label, desc]) => `
       <div class="row">
@@ -248,7 +268,8 @@ const VIEWS = {
       <div class="row" style="flex-direction:column;align-items:stretch">
         <div class="row-main"><div class="label">自定义规则（正则）</div><div class="desc">批量匹配编号 / 单号 / 地址一类内容。每行一条：<span class="mono">re:正则</span>（推荐），纯文字则按字面精确匹配。例：<span class="mono">re:[A-Z]{3,6}-\d{4}-\d+</span>、<span class="mono">re:[\\u4e00-\\u9fa5]{2,12}(路|街|大道)\\d+号</span></div></div>
         <textarea rows="3" data-change="privacy-extra" placeholder="ABCD-[A-Z0-9-]+&#10;合同编号[A-Z]\\d{4}" style="width:100%;margin-top:8px;font-size:12.5px">${esc((pv.extra_words || []).join("\n"))}</textarea>
-      </div>
+      </div>`
+    }
     </div>
 
     <div class="card fade-in">
