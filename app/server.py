@@ -731,7 +731,7 @@ async def v1_messages(req: Request, _=Depends(gateway_auth)):
                                  "skipped": f"冷却中，剩余 {int(remain)} 秒"})
             continue
         pblocked, prem = state_mod.provider_blocked(cand.provider["id"])
-        if pblocked:
+        if pblocked and not state_mod.provider_probeable(cand.provider["id"]):
             attempts_log.append({"provider": cand.provider.get("name"), "model": cand.model,
                                  "skipped": f"渠道冷却中（额度），剩余 {int(prem)} 秒"})
             continue
@@ -938,7 +938,7 @@ async def _execute(cfg: dict, sel, body: dict, stream: bool, endpoint: str = "ch
 
         pblocked, prem = state_mod.provider_blocked(cand.provider["id"])
 
-        if pblocked:
+        if pblocked and not state_mod.provider_probeable(cand.provider["id"]):
 
             attempts_log.append({"provider": cand.provider.get("name"), "model": cand.model,
 

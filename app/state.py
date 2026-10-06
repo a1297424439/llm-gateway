@@ -107,6 +107,28 @@ def provider_blocked(provider_id: str):
     return True, rem
 
 
+def provider_probeable(provider_id: str, ratio: float = 0.2) -> bool:
+    """渠道冷却是否进入「半开试探期」：剩余时间已不足冷却总时长的 ratio 比例。
+
+    用于让实际已恢复的渠道自愈——冷却接近尾声时放一个真实请求进去试探，
+    成功即解除（provider_mark_success），失败则继续退避。默认 ratio=0.2，
+    即冷却进行到 80% 之后允许试探。
+    """
+    it = PPOOL.get(provider_id)
+    if not it:
+        return True
+    until = float(it.get("until", 0))
+    opened = float(it.get("opened_at", 0))
+    delay = float(it.get("delay", 0))
+    now = time.time()
+    if now >= until:
+        return True
+    # 无打开时间/无时长信息时保守不允许
+    if not delay or delay <= 0:
+        return False
+    return (now - opened) >= (delay * (1.0 - ratio))
+
+
 def provider_mark_success(provider_id: str) -> None:
     """渠道请求成功 → 解除该渠道的渠道级冷却。"""
     global _dirty
