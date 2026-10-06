@@ -118,7 +118,7 @@ async def _probe_provider(pid: str):
 
     try:
 
-        models, ctxmap = await adapters.fetch_models(proxy_mod.client_for(p, CLIENT), p)
+        models, ctxmap, thinkmap = await adapters.fetch_models(proxy_mod.client_for(p, CLIENT), p)
 
 
 
@@ -137,6 +137,11 @@ async def _probe_provider(pid: str):
             for k, v in ctxmap.items():
 
                 pp["model_context"].setdefault(k, v)
+
+            if thinkmap:
+                mt = pp.setdefault("model_thinking", {})
+                for k in thinkmap:
+                    mt.setdefault(k, mt.get(k) or "max")
 
             pp["last_test"] = {"ok": True, "ts": time.time(), "detail": f"连接正常，{len(models)} 个模型"}
 
@@ -2017,6 +2022,17 @@ async def provider_update(pid: str, req: Request, _=Depends(api_auth)):
 
             p["model_context"] = {str(k): [int(v[0]), bool(v[1])] for k, v in b["model_context"].items() if isinstance(v, (list, tuple)) and len(v) >= 2}
 
+        if isinstance(b.get("model_thinking"), dict):
+            # 统一思考强度：{模型: auto/off/low/medium/high/max}
+            mt = {}
+            for k, v in b["model_thinking"].items():
+                if not isinstance(v, str):
+                    continue
+                mv = v.strip().lower()
+                if mv in ("auto", "off", "low", "medium", "high", "max"):
+                    mt[str(k)] = mv
+            p["model_thinking"] = mt
+
         if "priority" in b:
 
             try:
@@ -2111,7 +2127,7 @@ async def provider_refresh(pid: str, _=Depends(api_auth)):
 
     try:
 
-        models, ctxmap = await adapters.fetch_models(proxy_mod.client_for(p, CLIENT), p)
+        models, ctxmap, thinkmap = await adapters.fetch_models(proxy_mod.client_for(p, CLIENT), p)
 
 
 
@@ -2128,6 +2144,11 @@ async def provider_refresh(pid: str, _=Depends(api_auth)):
                 for k, v in ctxmap.items():
 
                     pp["model_context"].setdefault(k, v)
+
+                if thinkmap:
+                    mt = pp.setdefault("model_thinking", {})
+                    for k in thinkmap:
+                        mt.setdefault(k, mt.get(k) or "max")
 
                 pp["last_test"] = {"ok": True, "ts": time.time(), "detail": f"连接正常，{len(models)} 个模型"}
 

@@ -186,8 +186,12 @@ const ACTIONS = {
     const cur = (p.model_ctx || {})[m] || [0, false];
     const curVal = cur[0] || 0;
     const opts = [0, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576];
+    const mt = p.model_thinking || {};
+    const curLv = mt[m] || mt["*"] || "max";
+    const lvOpts = ["max", "high", "medium", "low", "off", "auto"];
+    const lvLabels = { max: "最高", high: "高", medium: "中", low: "低", off: "关闭", auto: "自动（跟随模型）" };
     openModal(`
-      <div class="modal-title">修改上下文长度 — ${esc(m)}</div>
+      <div class="modal-title">模型设置 — ${esc(m)}</div>
       <div class="modal-msg">当前：${curVal ? fmtCtx(curVal) + (cur[1] ? "（渠道标注）" : "（推测）") : "未知"}</div>
       <div class="form-grid">
         <div class="form-item">
@@ -200,6 +204,12 @@ const ACTIONS = {
           <label>或手动输入</label>
           <input type="number" id="ctx-input" min="0" max="2000000" placeholder="例如 131072" value="${curVal || ""}">
         </div>
+        <div class="form-item">
+          <label>思考强度</label>
+          <select id="think-sel">
+            ${lvOpts.map(l => `<option value="${l}" ${l === curLv ? "selected" : ""}>${lvLabels[l] || l}</option>`).join("")}
+          </select>
+        </div>
       </div>
       <div class="modal-btns"><button class="btn btn-plain" id="ctx-cancel">取消</button><button class="btn btn-primary" id="ctx-save">保存</button></div>`);
     $("#ctx-sel").onchange = e => { $("#ctx-input").value = e.target.value; };
@@ -209,11 +219,13 @@ const ACTIONS = {
       if (v < 0 || v > 2000000) { toast("上下文长度需在 0–2000000 之间", "err"); return; }
       if (!p.model_ctx) p.model_ctx = {};
       p.model_ctx[m] = [v, true]; // 手动标注 = exact
+      if (!p.model_thinking) p.model_thinking = {};
+      p.model_thinking[m] = $("#think-sel").value;
       closeModal();
       render();
       try {
-        await api("/api/providers/" + p.id, { method: "PUT", body: JSON.stringify({ model_context: p.model_ctx }) });
-        toast("上下文长度已更新");
+        await api("/api/providers/" + p.id, { method: "PUT", body: JSON.stringify({ model_context: p.model_ctx, model_thinking: p.model_thinking }) });
+        toast("模型设置已更新");
       } catch (e) { toast(e.message, "err"); refresh(); }
     };
   },
@@ -223,31 +235,44 @@ const ACTIONS = {
     if (!p) return;
     const models = (p.fetched_models && p.fetched_models.length ? p.fetched_models : p.sched_models) || [];
     if (!models.length) { toast("该渠道还没有模型，请先获取模型列表", "err"); return; }
+    const cfg_thinking = p.model_thinking || {};
     const rows = models.map(m => {
       const cur = (p.model_ctx || {})[m] || (p.model_context || {})[m] || [0, false];
       const v = cur[0] || 0;
+      const curLv = cfg_thinking[m] || cfg_thinking["*"] || "max";
+      const lvOpts = ["max", "high", "medium", "low", "off", "auto"];
+      const lvLabels = { max: "最高", high: "高", medium: "中", low: "低", off: "关闭", auto: "自动（跟随模型）" };
       return `
       <div class="form-item">
         <label>${esc(m)}</label>
-        <input type="number" min="0" max="2000000" data-ctx-input="${esc(m)}" placeholder="0 = 未知" value="${v || ""}">
+        <div class="think-row">
+          <input type="number" min="0" max="2000000" data-ctx-input="${esc(m)}" placeholder="上下文 0=未知" value="${v || ""}">
+          <select data-think-input="${esc(m)}" title="模型思考强度">
+            ${lvOpts.map(l => `<option value="${l}" ${l === curLv ? "selected" : ""}>${lvLabels[l] || l}</option>`).join("")}
+          </select>
+        </div>
       </div>`;
     }).join("");
     openModal(`
-      <div class="modal-title">模型上下文（tokens）— ${esc(p.name)}</div>
-      <div class="modal-msg">每个模型填一个数：131072 = 128K。留空或 0 = 未知，网关会自动推测。常用：32768=32K，65536=64K，131072=128K，262144=256K，1048576=1M。</div>
+      <div class="modal-title">模型设置 — ${esc(p.name)}</div>
+      <div class="modal-msg">上下文：每个模型填一个数，131072 = 128K；留空/0 = 未知，网关自动推测。思考强度：不同厂商参数名不一致，已统一为档位，默认最高；关闭/未知模型不注入参数。</div>
       <div class="form-grid" style="max-height:46vh;overflow:auto">${rows}</div>
       <div class="modal-btns"><button class="btn btn-plain" id="pcx-cancel">取消</button><button class="btn btn-primary" id="pcx-save">保存</button></div>`);
     $("#pcx-cancel").onclick = closeModal;
     $("#pcx-save").onclick = async () => {
       const mc = {};
+      const mt = {};
       $$("#modal [data-ctx-input]").forEach(inp => {
         const v = Math.max(0, Math.min(2000000, parseInt(inp.value || "0", 10) || 0));
         mc[inp.dataset.ctxInput] = [v, true];
       });
+      $$("#modal [data-think-input]").forEach(sel => {
+        mt[sel.dataset.thinkInput] = sel.value;
+      });
       closeModal();
       try {
-        await api("/api/providers/" + p.id, { method: "PUT", body: JSON.stringify({ model_context: mc }) });
-        toast("模型上下文已保存");
+        await api("/api/providers/" + p.id, { method: "PUT", body: JSON.stringify({ model_context: mc, model_thinking: mt }) });
+        toast("模型设置已保存");
         await refresh();
       } catch (e) { toast(e.message, "err"); refresh(); }
     };

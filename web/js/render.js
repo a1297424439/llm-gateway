@@ -179,7 +179,7 @@ function providerCard(p, tierIdx) {
     <div class="row pc-foot">
       <div class="btn-row">
         <button class="btn btn-sm btn-plain" data-act="provider-edit" data-id="${esc(p.id)}">编辑</button>
-        <button class="btn btn-sm btn-plain" data-act="provider-ctx" data-id="${esc(p.id)}">模型上下文</button>
+        <button class="btn btn-sm btn-plain" data-act="provider-ctx" data-id="${esc(p.id)}">模型设置</button>
         <button class="btn btn-sm btn-danger" data-act="provider-del" data-id="${esc(p.id)}">删除</button>
       </div>
       ${p.note ? `<span class="hint">${esc(p.note)}</span>` : ""}

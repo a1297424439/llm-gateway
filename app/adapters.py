@@ -132,12 +132,99 @@ def _clean_empty_tool_calls(messages) -> list:
 
 def build_payload(p: dict, body: dict, upstream_model: str) -> dict:
     if p.get("adapter") == "anthropic":
-        return build_anthropic_payload(body, upstream_model)
+        return build_anthropic_payload(body, upstream_model, p)
     payload = dict(body)
     payload["model"] = upstream_model
     if isinstance(payload.get("messages"), list):
         payload["messages"] = _clean_empty_tool_calls(payload["messages"])
+    _apply_thinking(payload, p, upstream_model)
     return payload
+
+
+# ---- 思考强度统一化（不同厂商参数名不一致，这里归一） ----
+# 统一值域：auto / off / low / medium / high / max（默认 max = 最高）
+_THINK_LEVELS = ("auto", "off", "low", "medium", "high", "max")
+
+# OpenAI 兼容：reasoning_effort 标准值（deepseek/qwen 等也用这套枚举）
+_THINK_TO_EFFORT = {
+    "low": "low",
+    "medium": "medium",
+    "high": "high",
+    "max": "high",      # OpenAI 无 max，用最接近的 high
+    "auto": None,       # 不设置，交给上游默认
+    "off": "none",      # 部分实现用 none 关闭；不支持的会被降级忽略
+}
+
+# Anthropic 原生：thinking 参数 + budget_tokens（按强度给预算）
+_THINK_TO_BUDGET = {
+    "low": 4096,
+    "medium": 16384,
+    "high": 32768,
+    "max": 65536,
+}
+
+
+def _vendor_of(model: str) -> str:
+    """按模型名粗判厂商，用于思考参数方言差异。"""
+    m = (model or "").lower()
+    if m.startswith(("claude", "anthropic")):
+        return "anthropic"
+    if m.startswith(("deepseek",)):
+        return "deepseek"
+    if m.startswith(("qw", "qwen")):
+        return "qwen"
+    if m.startswith(("glm", "zhipu", "chatglm")):
+        return "glm"
+    if m.startswith(("kimi", "moonshot")):
+        return "kimi"
+    if m.startswith(("gemini", "google")):
+        return "gemini"
+    if m.startswith(("gpt-5", "gpt-4", "o1", "o3", "o4")):
+        return "openai"
+    return "openai"  # 默认 OpenAI 兼容
+
+
+def _apply_thinking(payload: dict, p: dict, model: str) -> None:
+    """把统一思考强度写进 OpenAI 兼容请求体（不同厂商方言在 payload 层面归一）。
+
+    规则：
+    - 强度来自渠道级 model_thinking[model]（保存的统一值），缺省用 "max"。
+    - 只有强度为显式非 auto 时才注入参数；auto/未填则让上游默认。
+    - off 只对认识的厂商注入关闭；不认识的（无法确认支持）跳过，避免 400。
+    - max 落到 OpenAI 用 reasoning_effort=high；Anthropic 走 build_anthropic_payload。
+    """
+    mt = (p.get("model_thinking") or {})
+    level = mt.get(model) or mt.get("*") or "max"
+    level = level if level in _THINK_LEVELS else "max"
+
+    if level == "auto" or not level:
+        return  # 交给上游默认（不设参数）
+
+    vendor = _vendor_of(model)
+
+    # 通用 OpenAI 兼容口径（绝大多数中转站）：reasoning_effort
+    # 注意不盲目给所有模型塞，只对推理类模型/明确支持 reasoning 的塞，避免 400
+    effort = _THINK_TO_EFFORT.get(level)
+    if effort is None:
+        # auto / 未知
+        return
+    # off 只在认识 thinking 的厂商里显式关，其它不管
+    if level == "off" and vendor not in ("openai", "deepseek", "qwen", "glm", "kimi"):
+        return
+
+    if vendor in ("deepseek", "qwen", "glm", "kimi", "openai"):
+        if level == "off":
+            payload["reasoning_effort"] = "none"
+            payload["thinking"] = {"type": "disabled"}  # qwen 兼容
+        else:
+            payload["reasoning_effort"] = effort
+        # qwen/deepseek 额外带 thinking 显式开关
+        if vendor in ("qwen", "deepseek"):
+            payload["thinking"] = {"type": "enabled", "effort": effort} if level != "off" \
+                else {"type": "disabled"}
+    else:
+        # gemini 等：不强塞 reasoning_effort，交给上游
+        pass
 
 
 def _text_of(content) -> str:
@@ -166,7 +253,7 @@ def _images_of(content) -> list:
     return out
 
 
-def build_anthropic_payload(body: dict, model: str) -> dict:
+def build_anthropic_payload(body: dict, model: str, p: dict | None = None) -> dict:
     sys_parts: List[str] = []
     msgs: List[dict] = []
     for m in body.get("messages") or []:
@@ -245,7 +332,29 @@ def build_anthropic_payload(body: dict, model: str) -> dict:
                     out["tool_choice"] = {"type": "tool", "name": name}
     if body.get("stream"):
         out["stream"] = True
+    _apply_anthropic_thinking(out, p, model)
     return out
+
+
+def _apply_anthropic_thinking(out: dict, p: dict | None, model: str) -> None:
+    """Anthropic 原生：thinking 模式支持统一思考强度。
+
+    Anthropic 用 thinking {type, budget_tokens}；有 max 档但没有 effort 概念，
+    以预算体现强度。Claude 无 thinking 档的模型（如某些）传 thinking 会 400，
+    所以只在 claude 系模型名上注入，且 off 明确 type=disabled。
+    """
+    if not p or not (model or "").lower().startswith("claude"):
+        return
+    mt = p.get("model_thinking") or {}
+    level = mt.get(model) or mt.get("*") or "max"
+    level = level if level in _THINK_LEVELS else "max"
+    if level == "auto":
+        return  # 交给上游默认
+    if level == "off":
+        out["thinking"] = {"type": "disabled"}
+        return
+    budget = _THINK_TO_BUDGET.get(level, 16384)
+    out["thinking"] = {"type": "enabled", "budget_tokens": budget}
 
 
 # ---------------------------------------------------------------- 响应转换
@@ -396,7 +505,8 @@ async def iter_sse_data(resp: httpx.Response) -> AsyncGenerator[str, None]:
 
 
 async def fetch_models(client: httpx.AsyncClient, p: dict):
-    """返回 (模型ID列表, {模型: 上下文长度})。部分上游 /models 会附带上下文元数据。"""
+    """返回 (模型ID列表, {模型: 上下文长度}, {模型: 思考能力标志})。
+    部分上游 /models 会附带上下文元数据与思考能力字段。"""
     r = await client.get(models_url(p), headers=provider_headers(p), timeout=20)
     if r.status_code != 200:
         raise_for_status(r.status_code, r.text)
@@ -406,6 +516,7 @@ async def fetch_models(client: httpx.AsyncClient, p: dict):
         raise UpstreamError("模型列表不是合法 JSON", status=502)
     ids = []
     ctx = {}
+    think = {}
     data = j.get("data") if isinstance(j, dict) else None
     if isinstance(data, list):
         for m in data:
@@ -418,4 +529,29 @@ async def fetch_models(client: httpx.AsyncClient, p: dict):
                 if isinstance(v, (int, float)) and v > 0:
                     ctx[mid] = int(v)
                     break
-    return sorted(set(ids)), ctx
+            # 思考能力探测：上游显式标注字段更可信
+            if _model_supports_thinking(m):
+                think[mid] = True
+    return sorted(set(ids)), ctx, think
+
+
+def _model_supports_thinking(m: dict) -> bool:
+    """判断上游 /models 里单个模型条目是否显示支持思考/推理模式。
+
+    兼容不同厂商的字段名：OpenAI 用 reasoning_effort 存在/非null，
+    部分中转用 thinking、enable_thinking、reasoning、reasoning_model，
+    Anthropic 生态用 thinking_budget，(deepseek) 用 thinking 字段。
+    """
+    for k in ("reasoning_effort", "thinking", "enable_thinking", "reasoning",
+              "reasoning_model", "thinking_budget", "enable_reasoning",
+              "supports_thinking", "reasoning_effort_options"):
+        v = m.get(k)
+        if v is not None:
+            # a value of False / "off" / 0 explicitly disables
+            if isinstance(v, bool):
+                return v
+            if isinstance(v, str) and v.strip().lower() in ("false", "off", "none", "no", "0"):
+                return False
+            # list/float/other truthy presence = supported
+            return True
+    return False

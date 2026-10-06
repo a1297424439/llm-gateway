@@ -15,3 +15,6 @@ venv/
 
 # Inno Setup 输出
 installer/*.exe
+
+# 内部开发方案文档
+SANITIZE_PLAN.md
