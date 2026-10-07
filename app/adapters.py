@@ -184,35 +184,54 @@ def _vendor_of(model: str) -> str:
     return "openai"  # 默认 OpenAI 兼容
 
 
-def _apply_thinking(payload: dict, p: dict, model: str) -> None:
-    """把统一思考强度写进 OpenAI 兼容请求体（不同厂商方言在 payload 层面归一）。
+# 推理/思考能力模型名特征（用于决定「默认最高」是否该注入参数；
+# 不在名单里的模型一律不注入，避免给不支持的模型塞参数导致上游 400）
+_REASONING_HINTS = (
+    "thinking", "reasoner", "reasoning", "-r1", "qwq", "o1", "o3", "o4",
+    "gpt-5", "gpt-oss", "qwen3", "glm-5", "glm-4.5", "glm-4.6", "glm-z1",
+    "kimi-k3", "kimi-k2-thinking", "minimax-m3", "gemini-2.5", "gemini-3",
+    "grok-3", "grok-4", "seed-oss", "hunyuan-think", "deepseek-v4", "deepseek-v3.1",
+)
 
-    规则：
-    - 强度来自渠道级 model_thinking[model]（保存的统一值），缺省用 "max"。
-    - 只有强度为显式非 auto 时才注入参数；auto/未填则让上游默认。
-    - off 只对认识的厂商注入关闭；不认识的（无法确认支持）跳过，避免 400。
-    - max 落到 OpenAI 用 reasoning_effort=high；Anthropic 走 build_anthropic_payload。
+
+def _looks_reasoning(model: str) -> bool:
+    m = (model or "").lower()
+    return any(h in m for h in _REASONING_HINTS)
+
+
+def _apply_thinking(payload: dict, p: dict, model: str) -> None:
+    """把统一思考强度写进 OpenAI 兼容请求体（不同厂商思考参数名不一致，这里归一）。
+
+    注入策略（保守，避免把不支持的模型搞 400）：
+    - 渠道 model_thinking 里显式有该模型 或 "*" → 按用户/探测值注入
+    - 否则：仅当模型名像推理模型（_looks_reasoning）时按默认 "max" 注入
+    - 都不满足 → 不注入任何思考参数
+    - level="auto" → 不注入（交给上游默认）
     """
     mt = (p.get("model_thinking") or {})
-    level = mt.get(model) or mt.get("*") or "max"
+    explicit = mt.get(model)
+    if explicit is None and "*" in mt:
+        explicit = mt.get("*")
+    if explicit is None and not _looks_reasoning(model):
+        return  # 未知能力模型：安全起见不动它
+    level = explicit or "max"
     level = level if level in _THINK_LEVELS else "max"
 
-    if level == "auto" or not level:
+    if level == "auto":
         return  # 交给上游默认（不设参数）
 
     vendor = _vendor_of(model)
 
-    # 通用 OpenAI 兼容口径（绝大多数中转站）：reasoning_effort
-    # 注意不盲目给所有模型塞，只对推理类模型/明确支持 reasoning 的塞，避免 400
     effort = _THINK_TO_EFFORT.get(level)
     if effort is None:
-        # auto / 未知
         return
     # off 只在认识 thinking 的厂商里显式关，其它不管
     if level == "off" and vendor not in ("openai", "deepseek", "qwen", "glm", "kimi"):
         return
 
-    if vendor in ("deepseek", "qwen", "glm", "kimi", "openai"):
+    if vendor in ("deepseek", "qwen", "glm", "kimi", "openai", "anthropic"):
+        # 注意：本函数只服务 OpenAI 兼容路径（真 anthropic 原生渠道走 build_anthropic_payload），
+        # 所以 claude 模型经中转站 OpenAI 接口调用时同样用 reasoning_effort。
         if level == "off":
             payload["reasoning_effort"] = "none"
             payload["thinking"] = {"type": "disabled"}  # qwen 兼容

@@ -280,6 +280,7 @@ const ACTIONS = {
 };
 
 const CHANGES = {
+  async "settings-bool"(d, el) { await saveSettings({ [d.sect]: { [d.field]: el.checked } }); },
   async "privacy-bool"(d, el) { await saveSettings({ privacy: { [d.field]: el.checked } }); },
   async "privacy-rule"(d, el) { await saveSettings({ privacy: { rules: { [d.rule]: el.checked } } }); },
   async "privacy-glossary"(d, el) {

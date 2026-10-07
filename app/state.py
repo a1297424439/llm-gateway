@@ -38,6 +38,21 @@ def pbase_max(ctype: str = "quota") -> "tuple[float, float]":
         return float(PBASE_DEFAULT), float(PMAX_DEFAULT)
 
 
+def cooling_enabled() -> bool:
+    """冷却机制总开关（config.cooldown.enabled，默认 True）。
+
+    关闭后：失败不再写入冷却池，每次请求都按候选顺序全量重试（轮询式），
+    适合「上游偶发抖动、宁可多试也不要被冻住」的场景；代价是真正失效的
+    渠道（如 key 失效）每次请求都会白撞一次。
+    """
+    try:
+        cd = (cfgmod.cfg() or {}).get("cooldown") or {}
+        v = cd.get("enabled")
+        return True if v is None else bool(v)
+    except Exception:
+        return True
+
+
 def log_request(**kw) -> None:
     global _dirty
     entry = {"ts": time.time()}
@@ -50,6 +65,8 @@ def log_request(**kw) -> None:
 def mark_fail(key: str, base: float, maxs: float, retry_after: Optional[float] = None, error: str = "") -> None:
     """失败进入冷却池：指数退避 base*2^(n-1)，429 优先尊重 Retry-After。"""
     global _dirty
+    if not cooling_enabled():
+        return
     with MUTEX:
         it = POOL.setdefault(key, {"fails": 0, "opened_at": time.time()})
         it["fails"] = int(it.get("fails", 0)) + 1
@@ -77,6 +94,8 @@ def mark_provider_fail(provider_id: str, error: str = "", ctype: str = "quota") 
     ctype="rate"  → 限流类故障，短冷却：60s 起步指数退避，封顶 10 分钟。
     quota 冷却优先：限流不得把额度冷却降级成短冷却。"""
     global _dirty
+    if not cooling_enabled():
+        return
     with MUTEX:
         base, maxs = pbase_max(ctype)
         old = PPOOL.get(provider_id)
@@ -98,6 +117,8 @@ def mark_provider_fail(provider_id: str, error: str = "", ctype: str = "quota") 
 
 def provider_blocked(provider_id: str):
     """渠道是否在渠道级冷却中。返回 (是否冷却, 剩余秒)。"""
+    if not cooling_enabled():
+        return False, 0.0
     it = PPOOL.get(provider_id)
     if not it:
         return False, 0.0
@@ -140,6 +161,8 @@ def provider_mark_success(provider_id: str) -> None:
 
 def blocked(key: str):
     """是否仍在冷却中。冷却到期后半开：允许一次试探请求，再失败则加倍冷却。"""
+    if not cooling_enabled():
+        return False, 0.0
     it = POOL.get(key)
     if not it:
         return False, 0.0

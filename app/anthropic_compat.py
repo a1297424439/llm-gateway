@@ -33,13 +33,17 @@ def to_openai_request(body: dict) -> dict:
         if role == "assistant":
             blocks = content if isinstance(content, list) else (
                 [{"type": "text", "text": content}] if content else [])
-            texts, tool_calls = [], []
+            texts, tool_calls, thinkings = [], [], []
             for b in blocks:
                 if not isinstance(b, dict):
                     continue
                 t = b.get("type")
                 if t == "text" and b.get("text"):
                     texts.append(b["text"])
+                elif t == "thinking" and b.get("thinking"):
+                    # 思考模式下上游（DeepSeek 系/中转）要求把 reasoning_content 回传，
+                    # 否则报 400「The reasoning_content in the thinking mode must be passed back」。
+                    thinkings.append(b["thinking"])
                 elif t == "tool_use":
                     tool_calls.append({"id": b.get("id") or _now_id("toolu"), "type": "function",
                                        "function": {"name": b.get("name") or "",
@@ -47,6 +51,8 @@ def to_openai_request(body: dict) -> dict:
             msg = {"role": "assistant", "content": "\n".join(texts) if texts else None}
             if tool_calls:
                 msg["tool_calls"] = tool_calls
+            if thinkings:
+                msg["reasoning_content"] = "\n".join(thinkings)
             if msg["content"] is None and not tool_calls:
                 msg["content"] = ""
             msgs.append(msg)
@@ -196,6 +202,12 @@ class StreamToAnthropic:
         cb = {"type": kind}
         if kind == "tool":
             cb = {"type": "tool_use", "id": b["tool_id"], "name": b["tool_name"], "input": {}}
+        elif kind == "thinking":
+            # Anthropic 协议要求 thinking 块起始就带 thinking/signature 字段（string），
+            # 缺了会被严格客户端（如 zcode 的 anthropic SDK）判 invalid_type 直接失败。
+            cb = {"type": "thinking", "thinking": "", "signature": ""}
+        elif kind == "text":
+            cb = {"type": "text", "text": ""}
         start = self._ev("content_block_start", {"type": "content_block_start", "index": idx, "content_block": cb})
         return idx, start
 

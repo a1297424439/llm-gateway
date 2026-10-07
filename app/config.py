@@ -91,7 +91,7 @@ def defaults() -> dict:
             "whitelist": [],            # 有序：数组顺序即优先级
             "whitelist_fallback": True,  # 请求不在白名单时按白名单优先级回退
         },
-        "cooldown": {"base_seconds": 300, "max_seconds": 3600,
+        "cooldown": {"enabled": True, "base_seconds": 300, "max_seconds": 3600,
                      "provider_base_seconds": 18000, "provider_max_seconds": 604800},
         "aggregate": {"name": "auto", "min_context": 1000000, "per_provider": 3},
         "proxy": {"url": ""},  # 代理出口：空=自动读系统代理(任何代理软件)；填了就强制用它

@@ -275,6 +275,10 @@ const VIEWS = {
     <div class="card fade-in">
       <div class="card-header"><div><div class="card-title">冷却池</div><div class="card-sub">模型级：失败按 base × 2ⁿ 退避，封顶 max；渠道级：额度类错误触发，5 小时起步封顶 7 天</div></div></div>
       <div class="row">
+        <div class="row-main"><div class="label">启用冷却机制</div><div class="desc">关闭后失败不再进入冷却池，每次请求都按候选顺序全量重试（轮询式）。适合上游偶发抽风、宁可多试也不要被冻住；代价是真正失效的渠道（如 key 失效）每次请求都会白撞一次。关闭时冷却池立即清空。</div></div>
+        <label class="switch"><input type="checkbox" data-change="settings-bool" data-sect="cooldown" data-field="enabled" ${cd.enabled !== false ? "checked" : ""}><span class="knob"></span></label>
+      </div>
+      <div class="row">
         <div class="row-main"><div class="label">基础冷却（秒）</div></div>
         <input type="number" min="5" max="3600" value="${cd.base_seconds ?? 60}" data-change="settings-num" data-sect="cooldown" data-field="base_seconds">
       </div>

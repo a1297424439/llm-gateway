@@ -1748,7 +1748,17 @@ async def api_settings(req: Request, _=Depends(api_auth)):
 
         if isinstance(c, dict):
 
-            _sanitize_section(cfg["cooldown"], c, ["base_seconds", "max_seconds"], int)
+            _sanitize_section(cfg["cooldown"], c,
+                              ["base_seconds", "max_seconds",
+                               "provider_base_seconds", "provider_max_seconds"], int)
+
+            if "enabled" in c:
+
+                cfg["cooldown"]["enabled"] = bool(c["enabled"])
+
+                if not cfg["cooldown"]["enabled"]:
+                    # 关闭冷却时立即清空现有冷却池：所有渠道瞬时恢复可用
+                    state_mod.clear()
 
         s = body.get("server")
 
