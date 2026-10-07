@@ -53,8 +53,12 @@ def to_openai_request(body: dict) -> dict:
                 msg["tool_calls"] = tool_calls
             if thinkings:
                 msg["reasoning_content"] = "\n".join(thinkings)
-            if msg["content"] is None and not tool_calls:
-                msg["content"] = ""
+            # 严格上游（DeepSeek 官方 / 五象云谷 等）会 422 拒绝空助手消息：
+            #   "Assistant messages must contain text, reasoning content, or tool_calls."
+            # 客户端（zcode 等）的历史里常有这种残留（被中断的回合、只出思考没出正文的回合），
+            # 塞空字符串同样会被拒 —— 直接丢弃这一条最稳妥。
+            if not texts and not tool_calls and not thinkings:
+                continue
             msgs.append(msg)
             continue
 
@@ -77,7 +81,11 @@ def to_openai_request(body: dict) -> dict:
                 if isinstance(inner, list):
                     inner = "\n".join(x.get("text", "") for x in inner
                                       if isinstance(x, dict) and x.get("type") == "text")
-                tool_results.append({"role": "tool", "tool_use_id": b.get("tool_use_id") or "",
+                # ⚠️ OpenAI 兼容协议要求 tool 消息用 tool_call_id（Anthropic 叫 tool_use_id）。
+                # 曾误发 tool_use_id → 严格上游 422「messages[3]: missing field `tool_call_id`」
+                # （DeepSeek 官方 / 五象云谷实测）。id 缺失时补一个，避免空值同样被拒。
+                _tcid = b.get("tool_use_id") or _now_id("call")
+                tool_results.append({"role": "tool", "tool_call_id": _tcid,
                                      "content": inner if isinstance(inner, str) else json.dumps(inner, ensure_ascii=False)})
         if tool_results:
             msgs.extend(tool_results)

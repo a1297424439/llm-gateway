@@ -1,5 +1,5 @@
 #define MyAppName "LLM Gateway"
-#define MyAppVersion "1.0.31"
+#define MyAppVersion "1.0.32"
 #define MyAppPublisher "DaFeiPower"
 #define MyAppExeName "llm-gateway.exe"
 
