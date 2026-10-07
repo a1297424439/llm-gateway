@@ -4,6 +4,30 @@ const ACTIONS = {
   nav(d) { S.view = d.view; render(); },
   refresh() { refresh(); },
   copy(d) { copyText(d.copy); },
+  /* 渠道页：一键测速（对每个已勾选模型发一个极小请求，实测耗时；结果显示在模型标签上） */
+  async "speed-test"() {
+    if (S.speedRunning) return;
+    S.speedRunning = true; S.busy = true; render();
+    try {
+      const r = await api("/api/speed-test", { method: "POST", body: JSON.stringify({}) });
+      if (r && r.ok) toast(`测速完成：${r.available}/${r.total} 个模型可用`);
+      else toast((r && r.error) || "测速失败", "err");
+    } catch (e) {
+      toast("测速失败：" + e.message, "err");
+    } finally {
+      S.speedRunning = false; S.busy = false;
+      try { await refresh(); } catch (e) { /* 忽略 */ }
+      render();
+    }
+  },
+  /* 星标：无视冷却机制，每次请求最先调用 */
+  async "star-toggle"(d) {
+    try {
+      await api("/api/stars", { method: "POST", body: JSON.stringify({ provider_id: d.pid, model: d.model }) });
+      await refresh();
+      render();
+    } catch (e) { toast(e.message, "err"); }
+  },
   "theme-cycle"() {
     S.theme = S.theme === "auto" ? "light" : S.theme === "light" ? "dark" : "auto";
     applyTheme(); toast("主题：" + { auto: "跟随系统", light: "浅色", dark: "深色" }[S.theme]);
@@ -173,10 +197,6 @@ const ACTIONS = {
     api("/api/open-url", { method: "POST", body: JSON.stringify({ url: "https://aifangan.top" }) })
       .catch(() => toast("打开失败", "err"));
   },
-  "sponsor-open"() {
-    toast("赞助页地址预留位，后续在代码中替换为你的收款页链接");
-  },
-  "sponsor-copy"(d) { copyText(d.copy || "https://example.com/sponsor", "赞助链接已复制"); },
   "chip-ctx"(d, el) {
     // 阻止冒泡到 chip-toggle
     if (event) { event.stopPropagation(); event.preventDefault(); }
@@ -320,6 +340,16 @@ const CHANGES = {
     api("/api/providers/" + d.id, { method: "PUT", body: JSON.stringify({ enabled: el.checked }) })
       .then(async () => { toast(el.checked ? "渠道已启用" : "渠道已停用"); await refresh(); })
       .catch(e => { toast(e.message, "err"); refresh(); });
+  },
+  /* 速度优先：开启后每小时自动测速，渠道内按实测耗时排序调度 */
+  async "speed-first"(d, el) {
+    const on = !!el.checked;
+    try {
+      await saveSettings({ speed_first: { enabled: on } });
+      toast(on ? "速度优先已开启：每小时自动测速一轮" : "速度优先已关闭（仍可用手动测速结果排序）");
+      if (on) api("/api/speed-test", { method: "POST", body: JSON.stringify({}) })
+        .then(() => refresh()).catch(() => { });
+    } catch (e) { toast(e.message, "err"); el.checked = !on; }
   },
   "dd-toggle"(d, el) {
     const list = $("#recList");

@@ -8,6 +8,7 @@ const VIEWS = {
     const anthUrlLan = d.urls && d.urls[1] ? d.urls[1].url.replace(/\/v1$/, "") : "";
     const key = c.server.key || "";
     const st = d.stats || {};
+    const us = d.usage_summary || {};
     const cds = d.cooldowns || [];
     const up = fmtDur(d.uptime || 0);
     const enabledN = (c.providers || []).filter(p => p.enabled).length;
@@ -126,11 +127,27 @@ const VIEWS = {
           <button class="btn btn-sm btn-plain" data-act="nav" data-view="providers">去勾选模型</button>
         </div>
       </div>
+    </div>
+
+    <div class="card fade-in">
+      <div class="card-header">
+        <div><div class="card-title">Token 消耗热力图</div><div class="card-sub">按天累计（prompt + completion）· 颜色越深用量越大 · 鼠标悬停看当天明细</div></div>
+        <div class="btn-row" style="flex:none;gap:6px">
+          <span class="badge badge-gray">今日 ${fmtTok(us.today.total || 0)}</span>
+          <span class="badge badge-gray">近 7 天 ${fmtTok(us.last7.total || 0)}</span>
+          <span class="badge badge-gray">累计 ${fmtTok(us.all.total || 0)}</span>
+        </div>
+      </div>
+      ${heatmapHtml(d.usage || [])}
+      <div class="row" style="border-top:1px solid var(--border)">
+        <div class="row-main"><div class="desc">今日：prompt ${fmtTok(us.today.p || 0)} · completion ${fmtTok(us.today.c || 0)} · 成功 ${us.today.ok || 0} / 失败 ${us.today.fail || 0}　|　累计：prompt ${fmtTok(us.all.p || 0)} · completion ${fmtTok(us.all.c || 0)} · 请求 ${us.all.n || 0} 次 · 已统计 ${us.all.days || 0} 天</div></div>
+      </div>
     </div>`;
   },
 
   providers() {
     const c = cfg();
+    const sfOn = !!((c.speed_first || {}).enabled);
     const sorted = [...(c.providers || [])].sort((a, b) =>
       (a.priority || 99) - (b.priority || 99) || String(a.name || "").localeCompare(String(b.name || "")));
     const safeHint = c.mode === "safe"
@@ -161,14 +178,29 @@ const VIEWS = {
       <button class="btn btn-primary" data-act="provider-add">＋ 添加渠道</button>
     </div>
     ${safeHint}
+    <div class="card fade-in" style="margin-bottom:14px">
+      <div class="card-header">
+        <div><div class="card-title">模型测速</div><div class="card-sub">对每个已勾选模型发一句 hi（max_tokens=8）实测响应耗时；结果直接标在下方每个模型标签上（纯诊断：不写冷却池、不计入请求统计）</div></div>
+        <button class="btn btn-primary" data-act="speed-test" ${S.speedRunning ? "disabled" : ""}>${S.speedRunning ? "测速中…" : "一键测速"}</button>
+      </div>
+      <div class="row">
+        <div class="row-main">
+          <div class="label">速度优先${sfOn ? "（已开启）" : ""}</div>
+          <div class="desc">开启后<b>每小时自动测速一轮</b>，调度时同一渠道内优先调用最快的模型（没测到数据的排最后）</div>
+        </div>
+        <label class="switch"><input type="checkbox" data-change="speed-first" ${sfOn ? "checked" : ""}><span class="knob"></span></label>
+      </div>
+      <div class="row" style="border-bottom:none"><div class="desc">${speedSummaryText()}</div></div>
+    </div>
     <div class="card card-pad fade-in hint" style="margin-bottom:14px">
       <b>拖拽渠道卡片</b>调整调度顺序：<b>越靠上越优先</b>，拖入对应档位即可自动归类。
       点击模型标签勾选参与调度（高亮 ✓），<b>勾选后拖拽标签</b>可调整该渠道内的调度顺序；
+      标签左侧 <b>☆</b> = 星标（星标模型<b>无视冷却机制</b>，每次请求都最先调用，失败才回落到冷却池）；
       失败自动进入冷却池并降级到下一档；同名模型多渠道勾选即自动互备。
     </div>
     <div class="card fade-in" style="margin-bottom:14px">
       <div class="row">
-        <div class="row-main"><div class="desc">点击模型标签勾选参与调度；标签上的 K 数 = 上下文长度（~ 为家族推测，? 为未知）。勾选后拖拽标签可调顺序。</div></div>
+        <div class="row-main"><div class="desc">点击模型标签勾选参与调度；标签上的 K 数 = 上下文长度（~ 为家族推测，? 为未知）、右边的 ms = 最近一次测速耗时。勾选后拖拽标签可调顺序。</div></div>
       </div>
     </div>
     ${sorted.length ? sections : `<div class="card fade-in"><div class="empty"><div class="big">暂无渠道</div>点击右上角「添加渠道」，可从预设一键填充 DeepSeek、智谱、Kimi 等</div></div>`}`;
@@ -196,20 +228,6 @@ const VIEWS = {
     const pvSummary = `模式${c.mode === "mask" ? "脱密" : c.mode === "safe" ? "安全" : "智能"} · 词库 ${(pv.glossary || []).length} 条 · 正则 ${(pv.extra_words || []).length} 条 · 学习 ${((S.data || {}).privacy_status || {}).learned || 0} 条 · 回填${pv.restore !== false ? "开" : "关"}`;
     return `
     <div class="view-title fade-in">设置</div>
-
-    <div class="card fade-in sponsor-card">
-      <div class="card-header">
-        <div><div class="card-title">支持这个项目</div><div class="card-sub">如果调度中枢对你有帮助，欢迎请作者喝杯咖啡</div></div>
-      </div>
-      <div class="card-pad" style="padding-top:0;text-align:center">
-        <img src="/sponsor-qr.png" alt="Sponsor QR" style="width:140px;height:140px;border-radius:12px">
-        <div class="hint" style="margin-top:8px">感谢义父义母赞助，作者跪谢 🙏</div>
-        <div style="margin-top:12px;display:flex;gap:8px;justify-content:center">
-          <button class="btn btn-sm btn-plain" data-act="sponsor-copy" data-copy="your-payment-link-here">复制赞助链接</button>
-          <button class="btn btn-sm btn-plain" data-act="sponsor-open">打开赞助页</button>
-        </div>
-      </div>
-    </div>
 
     <div class="card fade-in">
       <div class="card-header"><div><div class="card-title">调度参数</div><div class="card-sub">调度模式在「概览」页顶部切换</div></div></div>

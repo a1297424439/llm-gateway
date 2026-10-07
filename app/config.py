@@ -94,6 +94,12 @@ def defaults() -> dict:
         "cooldown": {"enabled": True, "base_seconds": 300, "max_seconds": 3600,
                      "provider_base_seconds": 18000, "provider_max_seconds": 604800},
         "aggregate": {"name": "auto", "min_context": 1000000, "per_provider": 3},
+        # 速度优先：开启后后台每小时自动给所有已勾选模型发一个极小请求测速，
+        # 调度时把同一渠道内已勾选的模型按实测耗时从快到慢排序（没测到数据的排最后）。
+        "speed_first": {"enabled": False, "interval_minutes": 60, "timeout_seconds": 15, "last_run": 0},
+        # 星标模型：["渠道ID::模型名", ...]。星标模型无视冷却机制，每次请求都最先尝试，
+        # 全部失败后才回到正常调度（含冷却池）。排序：渠道档位 → 渠道内模型顺序。
+        "stars": [],
         "proxy": {"url": ""},  # 代理出口：空=自动读系统代理(任何代理软件)；填了就强制用它
         # 模型思考强度：按模型名存的统一值（auto/off/low/medium/high/max），
         # 请求时由适配层转成各厂商参数。缺省未设置 = 模型自带默认。

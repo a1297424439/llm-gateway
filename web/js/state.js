@@ -9,6 +9,7 @@ const S = {
   collapsedTiers: JSON.parse(localStorage.getItem("gw_collapsed") || "[]"),
   collapsedPrivacy: localStorage.getItem("gw_privacy_collapsed") !== "0",
   dragId: null, autostart: false,
+  speedRunning: false,
 };
 const cfg = () => (S.data && S.data.config) || { server: {}, routing: {}, cooldown: {}, providers: [], aliases: [] };
 

@@ -15,6 +15,7 @@ function render() {
     : "";
   $("#restart-banner").innerHTML = banner;
   const sy = window.scrollY;
+  if (!VIEWS[S.view]) S.view = "dashboard";   // 兼容旧版本残留的视图名（如已移除的「统计」页）
   const fn = VIEWS[S.view] || VIEWS.dashboard;
   v.innerHTML = fn();
   window.scrollTo(0, sy);
@@ -137,7 +138,7 @@ function chipHtml(p, m) {
   const cls = on ? "selected" : "off";
   const tip = on ? "拖拽调整顺序 · 点击取消调度"
             : "拖拽 = 勾选并放到该位置 · 点击 = 勾选/取消";
-  return `<span class="chip ${cls}" data-mdrag="${esc(m)}" data-pid="${esc(p.id)}" data-act="chip-toggle" data-model="${esc(m)}" title="${tip}">${on ? "✓ " : "+ "}${esc(m)}${ctxBadge(p, m)}</span>`;
+  return `<span class="chip ${cls}" data-mdrag="${esc(m)}" data-pid="${esc(p.id)}" data-act="chip-toggle" data-model="${esc(m)}" title="${tip}">${starBtn(p, m)}${on ? "✓ " : "+ "}${esc(m)}${ctxBadge(p, m)}${speedBadge(p, m)}</span>`;
 }
 function providerCard(p, tierIdx) {
   const expanded = S.expandedProviders.has(p.id);
@@ -425,7 +426,91 @@ async function saveSettings(patch) {
   catch (e) { toast(e.message, "err"); } finally { S.busy = false; }
 }
 
-/* 点 ✕ 的确认框（主进程通过 evaluate_js 调用） */
+/* ============ 统计页：模型测速 + Token 热力图 ============ */
+
+/* ============ 模型测速（渠道页）：结果直接标在每个模型标签上 ============ */
+function speedOf(p, m) {
+  const sp = ((S.data || {}).speeds || {})[p.id + "::" + m];
+  return sp && sp.ok ? Number(sp.ms) || 0 : null;
+}
+function fmtMs(ms) {
+  ms = Number(ms) || 0;
+  return ms >= 1000 ? (ms / 1000).toFixed(1) + "s" : Math.round(ms) + "ms";
+}
+/* 标签右侧的测速徽标：成功显示耗时，失败显示 ✕（悬停看 HTTP 码） */
+function speedBadge(p, m) {
+  const sp = ((S.data || {}).speeds || {})[p.id + "::" + m];
+  if (!sp) return "";
+  if (sp.ok) return `<span class="sp" title="最近一次测速：${fmtMs(sp.ms)}${sp.ts ? "（" + fmtTime(sp.ts) + "）" : ""}">${fmtMs(sp.ms)}</span>`;
+  return `<span class="sp bad" title="最近一次测速失败：HTTP ${sp.status || "-"}${sp.ts ? "（" + fmtTime(sp.ts) + "）" : ""}">✕</span>`;
+}
+/* 星标：无视冷却机制，每次请求最先调用 */
+function isStarred(p, m) {
+  return ((cfg().stars) || []).includes(p.id + "::" + m);
+}
+function starBtn(p, m) {
+  const on = isStarred(p, m);
+  const tip = on ? "取消星标（当前：无视冷却，每次请求最先调用）"
+                 : "设为星标：无视冷却机制，每次请求都最先调用它，失败才回落到冷却池";
+  return `<button class="star ${on ? "on" : ""}" data-act="star-toggle" data-pid="${esc(p.id)}" data-model="${esc(m)}" title="${tip}">${on ? "★" : "☆"}</button>`;
+}
+/* 测速卡片底部的状态行 */
+function speedSummaryText() {
+  const sp = (S.data || {}).speeds || {};
+  const ks = Object.keys(sp);
+  const sf = cfg().speed_first || {};
+  const starN = ((cfg().stars) || []).length;
+  const starTxt = starN ? ` · 已星标 ${starN} 个模型` : "";
+  if (!ks.length) {
+    return (sf.enabled ? "自动测速已开启：每小时自动跑一轮，等待第一轮结果…"
+                       : "还没有测速数据 —— 点右侧「一键测速」跑一轮，或打开「速度优先」让它每小时自动跑") + starTxt;
+  }
+  const ok = ks.filter(k => sp[k] && sp[k].ok).length;
+  const last = Math.max.apply(null, ks.map(k => Number((sp[k] || {}).ts) || 0));
+  const when = last ? fmtTime(last) : "—";
+  return `共 ${ks.length} 个模型测过：可用 <b style="color:var(--green)">${ok}</b> / 失败 ${ks.length - ok} · 最近一轮 ${when}` +
+         (sf.enabled ? ` · 自动测速已开启（每 ${sf.interval_minutes || 60} 分钟）` : "") + starTxt;
+}
+
+/* 「Token 消耗热力图」：GitHub 风格日历格子（最近 26 周 × 7 天），颜色深浅 = 当天 token 总量 */
+function heatmapHtml(days) {
+  const map = new Map((days || []).map(d => [d.day, d]));
+  const WEEKS = 26;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const end = new Date(today); end.setDate(end.getDate() + (6 - end.getDay()));   // 对齐到本周周六
+  const start = new Date(end); start.setDate(end.getDate() - (WEEKS * 7 - 1));
+  const cells = [];
+  let max = 0, activeDays = 0;
+  for (let i = 0; i < WEEKS * 7; i++) {
+    const d = new Date(start); d.setDate(start.getDate() + i);
+    const rec = map.get(ymd(d));
+    const total = rec ? Number(rec.total) || 0 : 0;
+    if (total > max) max = total;
+    if (total > 0) activeDays++;
+    cells.push({ total, rec, future: d.getTime() > today.getTime(), isToday: d.getTime() === today.getTime(), md: `${d.getMonth() + 1}/${d.getDate()}` });
+  }
+  const lv = t => { if (!t || max <= 0) return 0; const r = t / max; return r > 0.75 ? 4 : r > 0.5 ? 3 : r > 0.25 ? 2 : 1; };
+  const cols = [];
+  for (let w = 0; w < WEEKS; w++) {
+    const col = cells.slice(w * 7, w * 7 + 7).map(c => {
+      const tip = c.future ? "未来" : (c.total ? `${c.md} · ${fmtTok(c.total)} tokens · ${(c.rec && c.rec.n) || 0} 次请求（prompt ${fmtTok((c.rec && c.rec.p) || 0)} / completion ${fmtTok((c.rec && c.rec.c) || 0)}）` : `${c.md} · 无用量`);
+      return `<span class="hm-cell lv${lv(c.total)}${c.future ? " future" : ""}${c.isToday ? " today" : ""}" title="${esc(tip)}"></span>`;
+    }).join("");
+    cols.push(`<div class="hm-col">${col}</div>`);
+  }
+  return `
+  <div class="card-pad" style="padding-top:8px">
+    <div class="hm-wrap"><div class="hm-grid">${cols.join("")}</div></div>
+    <div class="hm-legend">
+      <span class="hint">少</span>
+      <span class="hm-cell lv0"></span><span class="hm-cell lv1"></span><span class="hm-cell lv2"></span><span class="hm-cell lv3"></span><span class="hm-cell lv4"></span>
+      <span class="hint">多</span>
+      <span class="hint" style="margin-left:12px">最近 26 周 · 有用量 ${activeDays} 天 · 单日峰值 ${fmtTok(max)}</span>
+    </div>
+  </div>`;
+}
+
+
 window.__askClose = function () {
   if (document.querySelector("#closeAsk")) return;
   openModal(`<div class="modal-title">关闭窗口</div>

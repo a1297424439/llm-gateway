@@ -9,6 +9,15 @@ const maskKey = k => k ? k.slice(0, 8) + "••••••••••••" 
 function hashStr(s) { let h = 5381; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return String(h); }
 function setText(sel, t) { const el = $(sel); if (el && el.textContent !== String(t)) el.textContent = String(t); }
 function fmtCtx(ctx) { return ctx >= 1000000 ? Math.round(ctx / 1000000) + "M" : Math.round(ctx / 1000) + "K"; }
+/* token 数量缩写：1234 → 1.2K，1234567 → 1.23M */
+function fmtTok(n) {
+  n = Number(n) || 0;
+  if (n >= 1e9) return (n / 1e9).toFixed(2) + "B";
+  if (n >= 1e6) return (n / 1e6).toFixed(2) + "M";
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + "K";
+  return String(n);
+}
+const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
 function toast(msg, type = "ok") {
   const root = $("#toast-root");

@@ -12,9 +12,13 @@ from . import config as cfgmod
 
 MUTEX = threading.Lock()
 LOGS: deque = deque(maxlen=500)
+USAGE: Dict[str, dict] = {}   # 按天累计 token 用量（热力图数据源），key = "YYYY-MM-DD"
+SPEED: Dict[str, dict] = {}   # 测速结果，key = "{provider_id}::{model}" → {ms, ok, status, ts}
 POOL: Dict[str, dict] = {}   # key = "{provider_id}::{model}"  模型级冷却
 PPOOL: Dict[str, dict] = {}  # key = provider_id                  渠道级冷却（额度类错误）
 _dirty = False
+# 不入用量的「诊断类」日志别名（模型列表刷新等，不是真实对话请求）
+_USAGE_SKIP_ALIAS = ("模型列表",)
 
 # 渠道级冷却参数（秒）：额度类错误触发。指数退避 5h → 10h → 20h → 40h → 80h → 160h，封顶 7 天。
 PBASE_DEFAULT = 5 * 3600
@@ -60,6 +64,111 @@ def log_request(**kw) -> None:
     with MUTEX:
         LOGS.append(entry)
         _dirty = True
+    # 顺带累计当日 token 用量（热力图数据源）：
+    # usage 可能是 int（历史调用点只给 prompt_tokens）或 {"p":..,"c":..}（流式 usage_box）
+    if str(entry.get("alias") or "") not in _USAGE_SKIP_ALIAS:
+        u = entry.get("usage")
+        pt = ct = 0
+        if isinstance(u, dict):
+            pt = int(u.get("p") or u.get("prompt_tokens") or 0)
+            ct = int(u.get("c") or u.get("completion_tokens") or 0)
+        elif isinstance(u, (int, float)):
+            pt = int(u)
+        add_usage(pt, ct, ok=bool(entry.get("ok")))
+
+
+def _day_key(ts: Optional[float] = None) -> str:
+    return time.strftime("%Y-%m-%d", time.localtime(ts if ts is not None else time.time()))
+
+
+def add_usage(prompt: int = 0, completion: int = 0, ok: bool = True, ts: Optional[float] = None) -> None:
+    """按天累计 token 用量（「Token 消耗热力图」数据源）。
+
+    与 500 条滚动日志解耦：日志会被挤掉，这里按天累加并持久化，长期保留。
+    """
+    global _dirty
+    key = _day_key(ts)
+    with MUTEX:
+        d = USAGE.setdefault(key, {"p": 0, "c": 0, "n": 0, "ok": 0, "fail": 0})
+        d["p"] = int(d.get("p", 0)) + max(0, int(prompt or 0))
+        d["c"] = int(d.get("c", 0)) + max(0, int(completion or 0))
+        d["n"] = int(d.get("n", 0)) + 1
+        k = "ok" if ok else "fail"
+        d[k] = int(d.get(k, 0)) + 1
+        _dirty = True
+
+
+def usage_days(limit: int = 200) -> List[dict]:
+    """按日期升序返回每日用量（热力图）；total = prompt + completion。"""
+    with MUTEX:
+        items = sorted(USAGE.items())[-limit:]
+        out = []
+        for day, v in items:
+            p = int(v.get("p", 0))
+            c = int(v.get("c", 0))
+            out.append({"day": day, "p": p, "c": c, "total": p + c,
+                        "n": int(v.get("n", 0)), "ok": int(v.get("ok", 0)),
+                        "fail": int(v.get("fail", 0))})
+    return out
+
+
+def usage_total(days: Optional[List[dict]] = None) -> dict:
+    """汇总（可传 usage_days() 结果避免重复加锁）：总量 / 今日 / 近 7 天。"""
+    ds = days if days is not None else usage_days(400)
+    today = _day_key()
+    tot = {"p": 0, "c": 0, "total": 0, "n": 0, "days": len(ds)}
+    for d in ds:
+        tot["p"] += int(d["p"]); tot["c"] += int(d["c"])
+        tot["total"] += int(d["total"]); tot["n"] += int(d["n"])
+    today_row = next((d for d in ds if d["day"] == today), None)
+    last7 = ds[-7:]
+    return {
+        "today": today_row or {"day": today, "p": 0, "c": 0, "total": 0, "n": 0, "ok": 0, "fail": 0},
+        "last7": {"p": sum(d["p"] for d in last7), "c": sum(d["c"] for d in last7),
+                  "total": sum(d["total"] for d in last7), "n": sum(d["n"] for d in last7)},
+        "all": tot,
+    }
+
+
+def set_speeds(results, ts: Optional[float] = None) -> None:
+    """记录一轮测速结果（key = 渠道ID::模型），供「速度优先」排序与面板展示。"""
+    global _dirty
+    t = float(ts or time.time())
+    with MUTEX:
+        for r in (results or []):
+            try:
+                pid = str(r.get("provider_id") or "")
+                m = str(r.get("model") or "")
+                if not pid or not m:
+                    continue
+                SPEED[f"{pid}::{m}"] = {"ms": int(r.get("ms") or 0), "ok": bool(r.get("ok")),
+                                        "status": int(r.get("status") or 0), "ts": t}
+            except Exception:
+                continue
+        if len(SPEED) > 800:   # 只保留最近 800 条，防止无限增长
+            for k in sorted(SPEED, key=lambda k: SPEED[k].get("ts", 0))[:len(SPEED) - 800]:
+                SPEED.pop(k, None)
+        _dirty = True
+
+
+def speed_snapshot() -> Dict[str, dict]:
+    """全部测速结果快照（面板用）。"""
+    with MUTEX:
+        return {k: dict(v) for k, v in SPEED.items()}
+
+
+def speed_of(provider_id: str, model: str) -> Optional[int]:
+    """该 (渠道, 模型) 最近一次「成功」测速的耗时（毫秒）；没测过/失败 = None（排序时排最后）。"""
+    if not provider_id or not model:
+        return None
+    with MUTEX:
+        v = SPEED.get(f"{provider_id}::{model}")
+    if not v or not v.get("ok"):
+        return None
+    try:
+        return int(v.get("ms") or 0) or None
+    except Exception:
+        return None
 
 
 def mark_fail(key: str, base: float, maxs: float, retry_after: Optional[float] = None, error: str = "") -> None:
@@ -249,7 +358,9 @@ def stats() -> dict:
 
 def persist() -> None:
     with MUTEX:
-        data = {"logs": list(LOGS)[-500:], "pool": dict(POOL), "ppool": dict(PPOOL)}
+        data = {"logs": list(LOGS)[-500:], "pool": dict(POOL), "ppool": dict(PPOOL),
+                "usage": {k: dict(v) for k, v in sorted(USAGE.items())[-400:]},
+                "speed": {k: dict(v) for k, v in SPEED.items()}}
     p = cfgmod.state_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_suffix(".tmp")
@@ -266,18 +377,48 @@ def load() -> None:
     except Exception:
         return
     now = time.time()
+    _backfill = False
     with MUTEX:
         for l in (data.get("logs") or [])[-500:]:
             try:
                 LOGS.append(l)
             except Exception:
                 pass
+        # 冷启动回填：老版本没有 usage 天表，先把现有日志里的 token 归到各自日期，
+        # 这样热力图一上线就有历史痕迹，而不是从零开始。
+        if not USAGE:
+            _backfill = True
         for k, v in (data.get("pool") or {}).items():
             if isinstance(v, dict) and float(v.get("until", 0)) > now:
                 POOL[k] = v
+    if _backfill:
+        for l in (data.get("logs") or [])[-500:]:
+            if not isinstance(l, dict) or str(l.get("alias") or "") in _USAGE_SKIP_ALIAS:
+                continue
+            u = l.get("usage")
+            pt = ct = 0
+            if isinstance(u, dict):
+                pt = int(u.get("p") or u.get("prompt_tokens") or 0)
+                ct = int(u.get("c") or u.get("completion_tokens") or 0)
+            elif isinstance(u, (int, float)):
+                pt = int(u)
+            try:
+                add_usage(pt, ct, ok=bool(l.get("ok")), ts=float(l.get("ts") or now))
+            except Exception:
+                pass
+    with MUTEX:
         for k, v in (data.get("ppool") or {}).items():
             if isinstance(v, dict) and float(v.get("until", 0)) > now:
                 PPOOL[k] = v
+        for k, v in (data.get("speed") or {}).items():
+            if isinstance(v, dict):
+                SPEED[k] = {"ms": int(v.get("ms") or 0), "ok": bool(v.get("ok")),
+                            "status": int(v.get("status") or 0), "ts": float(v.get("ts") or 0)}
+        for k, v in (data.get("usage") or {}).items():
+            if isinstance(v, dict):
+                USAGE[str(k)] = {"p": int(v.get("p", 0) or 0), "c": int(v.get("c", 0) or 0),
+                                 "n": int(v.get("n", 0) or 0), "ok": int(v.get("ok", 0) or 0),
+                                 "fail": int(v.get("fail", 0) or 0)}
 
 
 def maybe_persist() -> None:

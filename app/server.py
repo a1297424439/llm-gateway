@@ -247,6 +247,8 @@ async def lifespan(app: FastAPI):
 
     probe = asyncio.create_task(_slow_probe_loop())
 
+    speed = asyncio.create_task(_speed_loop())
+
     try:
 
         yield
@@ -256,6 +258,8 @@ async def lifespan(app: FastAPI):
         task.cancel()
 
         probe.cancel()
+
+        speed.cancel()
 
         state_mod.persist()
 
@@ -725,16 +729,18 @@ async def v1_messages(req: Request, _=Depends(gateway_auth)):
     for cand in sel.candidates:
         if cand.provider["id"] in skip_providers:
             continue
-        blocked, remain = state_mod.blocked(cand.key)
-        if blocked:
-            attempts_log.append({"provider": cand.provider.get("name"), "model": cand.model,
-                                 "skipped": f"冷却中，剩余 {int(remain)} 秒"})
-            continue
-        pblocked, prem = state_mod.provider_blocked(cand.provider["id"])
-        if pblocked and not state_mod.provider_probeable(cand.provider["id"]):
-            attempts_log.append({"provider": cand.provider.get("name"), "model": cand.model,
-                                 "skipped": f"渠道冷却中（额度），剩余 {int(prem)} 秒"})
-            continue
+        if not cand.star:
+            # 星标模型无视冷却机制：每次请求都先试，失败后才走正常（冷却池）逻辑
+            blocked, remain = state_mod.blocked(cand.key)
+            if blocked:
+                attempts_log.append({"provider": cand.provider.get("name"), "model": cand.model,
+                                     "skipped": f"冷却中，剩余 {int(remain)} 秒"})
+                continue
+            pblocked, prem = state_mod.provider_blocked(cand.provider["id"])
+            if pblocked and not state_mod.provider_probeable(cand.provider["id"]):
+                attempts_log.append({"provider": cand.provider.get("name"), "model": cand.model,
+                                     "skipped": f"渠道冷却中（额度），剩余 {int(prem)} 秒"})
+                continue
         last_provider = cand.provider["id"]
         t0 = time.time()
         usage_box = {}
@@ -817,7 +823,8 @@ async def v1_messages(req: Request, _=Depends(gateway_auth)):
             state_mod.log_request(ok=True, ms=int((time.time() - t0) * 1000), stream=False,
                                   alias=sel.alias, provider=cand.provider.get("name"),
                                   model=cand.model,
-                                  usage=(data.get("usage") or {}).get("prompt_tokens"),
+                                  usage={"p": (data.get("usage") or {}).get("prompt_tokens"),
+                                         "c": (data.get("usage") or {}).get("completion_tokens")},
                                   attempts=attempts_log)
             return JSONResponse(out)
         except adapters.UpstreamError as e:
@@ -943,25 +950,29 @@ async def _execute(cfg: dict, sel, body: dict, stream: bool, endpoint: str = "ch
         if cand.provider["id"] in skip_providers:
             continue
 
-        blocked, remain = state_mod.blocked(cand.key)
+        if not cand.star:
 
-        if blocked:
+            # 星标模型无视冷却机制：先试，失败后才走正常（冷却池）逻辑
 
-            attempts_log.append({"provider": cand.provider.get("name"), "model": cand.model,
+            blocked, remain = state_mod.blocked(cand.key)
 
-                                 "skipped": f"冷却中，剩余 {int(remain)} 秒"})
+            if blocked:
 
-            continue
+                attempts_log.append({"provider": cand.provider.get("name"), "model": cand.model,
 
-        pblocked, prem = state_mod.provider_blocked(cand.provider["id"])
+                                     "skipped": f"冷却中，剩余 {int(remain)} 秒"})
 
-        if pblocked and not state_mod.provider_probeable(cand.provider["id"]):
+                continue
 
-            attempts_log.append({"provider": cand.provider.get("name"), "model": cand.model,
+            pblocked, prem = state_mod.provider_blocked(cand.provider["id"])
 
-                                 "skipped": f"渠道冷却中（额度），剩余 {int(prem)} 秒"})
+            if pblocked and not state_mod.provider_probeable(cand.provider["id"]):
 
-            continue
+                attempts_log.append({"provider": cand.provider.get("name"), "model": cand.model,
+
+                                     "skipped": f"渠道冷却中（额度），剩余 {int(prem)} 秒"})
+
+                continue
 
         # max_attempts 按「渠道」计数：同一渠道内的模型连续失败不消耗次数，
         # 保证渠道内全部勾选模型试完才降级到下一渠道（site_first 语义）。
@@ -1361,6 +1372,8 @@ async def api_state(_=Depends(api_auth)):
 
     info = _server_info(cfg)
 
+    _udays = state_mod.usage_days(200)
+
     return {
 
         "config": c,
@@ -1386,6 +1399,16 @@ async def api_state(_=Depends(api_auth)):
         "stats": state_mod.stats(),
 
         "logs": list(state_mod.LOGS)[-300:][::-1],
+
+        "usage": _udays,
+
+        "usage_summary": state_mod.usage_total(_udays),
+
+        "speeds": state_mod.speed_snapshot(),
+
+        "stars": list(cfg.get("stars") or []),
+
+        "speed_first": dict(cfg.get("speed_first") or {}),
 
     }
 
@@ -1792,6 +1815,24 @@ async def api_settings(req: Request, _=Depends(api_auth)):
                 if not cfg["cooldown"]["enabled"]:
                     # 关闭冷却时立即清空现有冷却池：所有渠道瞬时恢复可用
                     state_mod.clear()
+
+        sf = body.get("speed_first")
+
+        if isinstance(sf, dict):
+
+            dst = cfg.setdefault("speed_first", {})
+
+            if "enabled" in sf:
+
+                dst["enabled"] = bool(sf["enabled"])
+
+                if dst["enabled"] and not float(dst.get("last_run") or 0):
+                    dst["last_run"] = 0   # 开启后立刻跑第一轮（后台循环 60 秒内触发）
+
+            _sanitize_section(dst, sf, ["interval_minutes", "timeout_seconds"], float)
+
+        if isinstance(body.get("stars"), list):
+            cfg["stars"] = [str(x).strip() for x in body["stars"] if str(x).strip()]
 
         s = body.get("server")
 
@@ -2627,6 +2668,158 @@ async def cooldowns_clear(req: Request, _=Depends(api_auth)):
 
 
 
+
+
+async def _run_speed_test(cfg: dict, only: str = "", timeout_s: float = 15.0,
+                          parallel: int = 4, retain: bool = True) -> dict:
+    """给每个「已勾选参与调度」的模型发一个极小请求并计时。
+
+    纯诊断：**不写冷却池、不写请求日志**（否则会把渠道冻住 / 污染统计数据）。
+    retain=True 时把结果写进 state（供「速度优先」排序与面板展示）。
+    """
+    mode = str(cfg.get("mode") or "smart")
+    timeout_s = max(3.0, min(60.0, float(timeout_s or 15)))
+    parallel = max(1, min(8, int(parallel or 4)))
+
+    pairs = []
+    for p in cfg.get("providers") or []:
+        if not p.get("enabled"):
+            continue
+        if only and str(p.get("id")) != only:
+            continue
+        if mode == "safe" and not (p.get("trusted") or p.get("domestic")):
+            continue
+        for m in (p.get("sched_models") or []):
+            pairs.append((p, str(m)))
+    if not pairs:
+        return {"ok": False, "error": "没有可测的模型：请先在「渠道」页勾选参与调度的模型", "results": []}
+
+    sem = asyncio.Semaphore(parallel)
+
+    async def probe(prov: dict, model: str) -> dict:
+        t0 = time.time()
+        base = {"provider": prov.get("name"), "provider_id": prov.get("id"), "model": model}
+        try:
+            async with sem:
+                payload = adapters.build_payload(
+                    prov, {"model": model, "messages": [{"role": "user", "content": "hi"}],
+                           "max_tokens": 8}, model)
+                _cli = proxy_mod.client_for(prov, CLIENT)
+                hreq = _cli.build_request("POST", adapters.chat_url(prov),
+                                          headers=adapters.provider_headers(prov), json=payload,
+                                          timeout=httpx.Timeout(connect=8, read=timeout_s, write=30, pool=5))
+                r = await _cli.send(hreq)
+                ms = int((time.time() - t0) * 1000)
+                try:
+                    if r.status_code != 200:
+                        return {**base, "ok": False, "ms": ms, "status": r.status_code,
+                                "error": (r.text or "")[:160]}
+                    return {**base, "ok": True, "ms": ms, "status": 200, "error": ""}
+                finally:
+                    try:
+                        await r.aclose()
+                    except Exception:
+                        pass
+        except Exception as e:
+            return {**base, "ok": False, "ms": int((time.time() - t0) * 1000), "status": 0,
+                    "error": f"{type(e).__name__}: {str(e)[:150]}"}
+
+    results = await asyncio.gather(*[probe(p, m) for p, m in pairs])
+    results = sorted(results, key=lambda x: (not x.get("ok"), int(x.get("ms") or 0)))
+    okn = sum(1 for x in results if x.get("ok"))
+    tested_at = time.time()
+    if retain:
+        try:
+            state_mod.set_speeds(results, ts=tested_at)
+        except Exception:
+            pass
+    return {"ok": True, "total": len(results), "available": okn,
+            "timeout_seconds": timeout_s, "tested_at": tested_at, "results": results}
+
+
+async def _speed_loop() -> None:
+    """「速度优先」后台循环：开启后每 interval_minutes（默认 60）自动跑一轮测速。"""
+    await asyncio.sleep(20)   # 启动后先等 20 秒，避开启动高峰
+    while True:
+        try:
+            cfg = cfgmod.cfg()
+            sf = cfg.get("speed_first") or {}
+            if sf.get("enabled"):
+                try:
+                    interval = max(5.0, float(sf.get("interval_minutes") or 60)) * 60.0
+                except Exception:
+                    interval = 3600.0
+                last = float(sf.get("last_run") or 0)
+                if time.time() - last >= interval:
+                    r = await _run_speed_test(cfg, timeout_s=float(sf.get("timeout_seconds") or 15),
+                                              retain=True)
+                    cfgmod.mutate(lambda c: c.setdefault("speed_first", {}).__setitem__(
+                        "last_run", time.time()))
+                    if r.get("ok"):
+                        print(f"[speed] 自动测速完成：{r['available']}/{r['total']} 可用", flush=True)
+        except Exception as e:
+            try:
+                print(f"[speed] 自动测速异常：{type(e).__name__}: {e}", flush=True)
+            except Exception:
+                pass
+        await asyncio.sleep(60)
+
+
+@app.post("/api/stars")
+async def api_star_toggle(req: Request, _=Depends(api_auth)):
+    """星标模型开关：星标后无视冷却机制，每次请求都最先尝试（全部失败才回冷却池）。
+
+    body: {"provider_id": "...", "model": "...", "star": true}   # 不传 star 就取反
+    """
+    body: dict = {}
+    try:
+        _j = await req.json()
+        if isinstance(_j, dict):
+            body = _j
+    except Exception:
+        body = {}
+    pid = str(body.get("provider_id") or "").strip()
+    model = str(body.get("model") or "").strip()
+    if not pid or not model:
+        return {"ok": False, "error": "缺少 provider_id / model"}
+    key = f"{pid}::{model}"
+    want = body.get("star")
+
+    def mut(c: dict):
+        cur = [str(x) for x in (c.get("stars") or [])]
+        on = key in cur
+        target = (not on) if want is None else bool(want)
+        if target and not on:
+            cur.append(key)
+        elif (not target) and on:
+            cur = [x for x in cur if x != key]
+        c["stars"] = cur
+        return target
+
+    on = bool(cfgmod.mutate(mut))
+    return {"ok": True, "key": key, "star": on, "stars": list(cfgmod.cfg().get("stars") or [])}
+
+
+@app.post("/api/speed-test")
+async def api_speed_test(req: Request, _=Depends(api_auth)):
+    """一键测速：对全部「已勾选参与调度」的模型各发一个极小请求，测量响应耗时。
+
+    - 纯诊断：**不写冷却池、不写请求日志**（否则会把渠道冻住 / 污染统计数据）
+    - 并发受限（默认 4 路），单模型超时默认 15 秒（低于正常调度的 60 秒）
+    - 结果会写进 state，供「速度优先」排序和模型标签上的耗时展示使用
+    - 支持 body: {"provider_id": 只测某渠道, "timeout_seconds": 15, "parallel": 4}
+    """
+    body: dict = {}
+    try:
+        _j = await req.json()
+        if isinstance(_j, dict):
+            body = _j
+    except Exception:
+        body = {}
+    cfg = cfgmod.cfg()
+    return await _run_speed_test(cfg, only=str(body.get("provider_id") or ""),
+                                 timeout_s=float(body.get("timeout_seconds") or 15),
+                                 parallel=int(body.get("parallel") or 4), retain=True)
 
 
 @app.get("/api/logs/export")
