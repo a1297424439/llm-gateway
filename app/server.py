@@ -754,6 +754,20 @@ async def v1_messages(req: Request, _=Depends(gateway_auth)):
             if r.status_code != 200:
                 adapters.raise_for_status(r.status_code, r.text, r.headers)
             if stream:
+                # 先探首个数据块：部分上游用 HTTP 200 + 正文返回「额度耗尽通知」（假成功），
+                # 必须在返回给客户端之前识别，否则会被当成功、继续用这个没额度的渠道。
+                agen0 = adapters.iter_sse_data(r)
+                first_pl = None
+                try:
+                    first_pl = await agen0.__anext__()
+                except Exception:
+                    first_pl = None
+                if first_pl:
+                    _qt = adapters.text_of_openai_chunk(first_pl)
+                    if adapters.is_quota_text(_qt):
+                        await r.aclose()
+                        raise adapters.UpstreamError(
+                            "上游额度耗尽（正文提示，仅冷却该模型）: " + (_qt[:200] or first_pl[:200]), status=502)
                 conv = anthropic_compat.StreamToAnthropic(str(body.get("model") or cand.model))
                 sr = privacy_mod.StreamRestorer(ms)
                 state_mod.mark_success(cand.key)
@@ -761,28 +775,27 @@ async def v1_messages(req: Request, _=Depends(gateway_auth)):
                 state_mod.log_request(ok=True, ms=int((time.time() - t0) * 1000), stream=True,
                                       alias=sel.alias, provider=cand.provider.get("name"),
                                       model=cand.model, attempts=attempts_log)
-                NL = chr(10)
 
                 async def gen():
                     try:
-                        buf = ""
-                        async for raw in r.aiter_bytes():
-                            buf += raw.decode("utf-8", "replace")
-                            while NL in buf:
-                                ln, buf = buf.split(NL, 1)
-                                ln = ln.strip()
-                                if not ln.startswith("data:"):
-                                    continue
-                                data = ln[5:].strip()
-                                if data == "[DONE]":
-                                    break
+                        if first_pl is not None:
+                            _d = (first_pl or "").strip()
+                            if _d != "[DONE]":
                                 try:
-                                    ev = json.loads(sr.feed(data))
-                                    evs = conv.feed(ev)
+                                    for e in conv.feed(json.loads(sr.feed(_d))):
+                                        yield e
                                 except Exception:
-                                    continue
-                                for e in evs:
-                                    yield e
+                                    pass
+                        async for pl in agen0:
+                            _d = (pl or "").strip()
+                            if _d == "[DONE]":
+                                break
+                            try:
+                                evs = conv.feed(json.loads(sr.feed(_d)))
+                            except Exception:
+                                continue
+                            for e in evs:
+                                yield e
                         for e in conv.finish():
                             yield e
                     except Exception:
@@ -794,6 +807,10 @@ async def v1_messages(req: Request, _=Depends(gateway_auth)):
                                          headers={"Cache-Control": "no-cache",
                                                   "X-Accel-Buffering": "no"})
             data = privacy_mod.restore_out(ms, r.json())
+            _qtxt = adapters.text_of_openai_response(data)
+            if adapters.is_quota_text(_qtxt):
+                raise adapters.UpstreamError(
+                    "上游额度耗尽（正文提示，仅冷却该模型）: " + _qtxt[:200], status=502)
             out = anthropic_compat.openai_to_anthropic(data, str(body.get("model") or cand.model))
             state_mod.mark_success(cand.key)
             state_mod.provider_mark_success(cand.provider["id"])
@@ -1099,6 +1116,15 @@ async def _attempt_json(cfg: dict, cand, body: dict, endpoint: str = "chat", usa
 
             pass
 
+    # 假成功拦截：200 + 正文是「额度耗尽通知」→ 按额度类处理（渠道长冷却）
+    if endpoint == "chat":
+
+        _qtx = adapters.text_of_openai_response(data)
+
+        if adapters.is_quota_text(_qtx):
+
+            raise adapters.UpstreamError("上游额度耗尽（正文提示，仅冷却该模型）: " + _qtx[:200], status=502)
+
     if endpoint == "chat":
 
         out = adapters.response_to_openai(p, data, str(body.get("model") or cand.model))
@@ -1167,6 +1193,13 @@ async def _attempt_stream(cfg: dict, cand, body: dict, ms=None):
         sr = privacy_mod.StreamRestorer(ms)
 
         first = sr.feed(first)
+
+        # 假成功拦截：200 + 正文是「额度耗尽通知」→ 按额度类处理（渠道长冷却）
+        _qt0 = adapters.text_of_openai_chunk(first)
+        if adapters.is_quota_text(_qt0):
+            await r.aclose()
+            raise adapters.UpstreamError(
+                "上游额度耗尽（正文提示，仅冷却该模型）: " + (_qt0[:200] or first[:200]), status=502)
 
         if p.get("adapter") == "anthropic":
 

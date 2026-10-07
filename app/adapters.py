@@ -38,6 +38,81 @@ def is_rate_limit_error(status: int, message: str) -> bool:
     return not is_quota_error(status, message)
 
 
+# ---- 响应正文里的「额度耗尽通知」（假成功）识别 ----
+# 部分上游（如电信云智助手/息壤等）不用错误状态码，而是返回 HTTP 200，
+# 正文却是一段"+订购/购买 Token 套餐+"的额度耗尽通知。这类响应必须按额度类
+# 处理（渠道长冷却），否则网关会一直往这个已经没额度的渠道发请求。
+RESP_QUOTA_STRONG = (
+    "额度已用完", "额度用尽", "额度耗尽", "额度不足", "token额度", "token 额度",
+    "余额不足", "欠费", "insufficient_quota", "quota exceeded",
+    "exceeded your current quota", "no quota", "配额已用完", "免费额度已用尽",
+)
+RESP_QUOTA_CONTEXT = (
+    "购买", "订购", "充值", "套餐", "续费", "订购页面", "billing", "purchase",
+    "subscribe", "http://", "https://",
+)
+# 正文过长（正常回答）不判定，避免用户聊到「额度已用完」被误判
+RESP_QUOTA_MAX_LEN = 2500
+
+
+def is_quota_text(text: str, max_len: int = RESP_QUOTA_MAX_LEN) -> bool:
+    """判断「响应正文」是否是上游的额度耗尽通知（而非正常回答）。
+
+    需同时满足：① 命中额度强关键词 ② 命中购买/订购/链接等上下文词
+    ③ 正文足够短（系统通知通常很短）。三者同时命中才判定，降低误伤。
+    """
+    t = text or ""
+    if not t or len(t) > max_len:
+        return False
+    low = t.lower()
+    if not any(k.lower() in low for k in RESP_QUOTA_STRONG):
+        return False
+    return any(k.lower() in low for k in RESP_QUOTA_CONTEXT)
+
+
+def text_of_openai_response(data) -> str:
+    """从 OpenAI 格式响应里抽出正文（供额度通知检测用）。"""
+    if not isinstance(data, dict):
+        return ""
+    ch = (data.get("choices") or [{}])
+    ch0 = ch[0] if isinstance(ch, list) and ch else {}
+    msg = (ch0.get("message") or {}) if isinstance(ch0, dict) else {}
+    c = msg.get("content")
+    if isinstance(c, str):
+        return c
+    if isinstance(c, list):
+        return "\n".join(b.get("text", "") for b in c
+                         if isinstance(b, dict) and b.get("type") in ("text", None))
+    return ""
+
+
+def text_of_openai_chunk(payload: str) -> str:
+    """从一条 OpenAI 流式 chunk 载荷里抽出增量正文（也兼容 anthropic delta）。"""
+    try:
+        j = json.loads(payload)
+    except Exception:
+        return ""
+    if not isinstance(j, dict):
+        return ""
+    ch = j.get("choices")
+    if isinstance(ch, list) and ch:
+        d = ch[0].get("delta") or {}
+        c = d.get("content")
+        if isinstance(c, str):
+            return c
+        if isinstance(c, list):
+            return "".join(b.get("text", "") for b in c if isinstance(b, dict))
+    d = j.get("delta") or {}
+    if isinstance(d, dict):
+        t = d.get("text") or d.get("thinking")
+        if isinstance(t, str):
+            return t
+    c = j.get("content")
+    if isinstance(c, str):
+        return c
+    return ""
+
+
 class UpstreamError(Exception):
     """上游失败。retryable=True 时计入冷却池并尝试下一优先级。"""
 
