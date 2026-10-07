@@ -2791,6 +2791,13 @@ async def api_star_toggle(req: Request, _=Depends(api_auth)):
         target = (not on) if want is None else bool(want)
         if target and not on:
             cur.append(key)
+            # 星标即隐式勾选：router 只调度 sched_models 里的模型，不勾选的话星标不会生效
+            for _p in (c.get("providers") or []):
+                if str(_p.get("id")) == pid:
+                    sm = _p.setdefault("sched_models", [])
+                    if model not in sm:
+                        sm.append(model)
+                    break
         elif (not target) and on:
             cur = [x for x in cur if x != key]
         c["stars"] = cur

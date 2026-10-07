@@ -192,6 +192,13 @@ const VIEWS = {
       </div>
       <div class="row" style="border-bottom:none"><div class="desc">${speedSummaryText()}</div></div>
     </div>
+    <div class="card fade-in" style="margin-bottom:14px">
+      <div class="card-header">
+        <div><div class="card-title">★ 星标优先</div><div class="card-sub">星标模型<b>无视冷却机制</b>：每次请求都最先调用它，失败后才回落到正常调度（含冷却池）。多个星标按「渠道档位 → 渠道内模型顺序」</div></div>
+        <span class="badge badge-gray" style="flex:none">${(c.stars || []).length} 个</span>
+      </div>
+      ${starListHtml()}
+    </div>
     <div class="card card-pad fade-in hint" style="margin-bottom:14px">
       <b>拖拽渠道卡片</b>调整调度顺序：<b>越靠上越优先</b>，拖入对应档位即可自动归类。
       点击模型标签勾选参与调度（高亮 ✓），<b>勾选后拖拽标签</b>可调整该渠道内的调度顺序；

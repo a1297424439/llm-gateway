@@ -135,10 +135,36 @@ function tierOf(p) {
 }
 function chipHtml(p, m) {
   const on = (p.sched_models || []).includes(m);
-  const cls = on ? "selected" : "off";
-  const tip = on ? "拖拽调整顺序 · 点击取消调度"
-            : "拖拽 = 勾选并放到该位置 · 点击 = 勾选/取消";
-  return `<span class="chip ${cls}" data-mdrag="${esc(m)}" data-pid="${esc(p.id)}" data-act="chip-toggle" data-model="${esc(m)}" title="${tip}">${starBtn(p, m)}${on ? "✓ " : "+ "}${esc(m)}${ctxBadge(p, m)}${speedBadge(p, m)}</span>`;
+  const star = isStarred(p, m);
+  const cls = `chip ${on ? "selected" : "off"} has-star${star ? " starred" : ""}`;
+  const tip = on ? "点击取消调度 · 拖拽调整顺序" : "点击加入调度 · 拖拽 = 勾选并放到该位置";
+  const startip = star ? "取消星标（当前：无视冷却，每次请求最先调用）"
+                       : "设为星标：无视冷却机制，每次请求都最先调用它（会自动加入调度）";
+  return `<span class="${cls}" data-mdrag="${esc(m)}" data-pid="${esc(p.id)}">`
+       + `<button class="chip-star${star ? " on" : ""}" data-act="star-toggle" data-pid="${esc(p.id)}" ` +
+         `data-model="${esc(m)}" title="${startip}">${star ? "★" : "☆"}</button>`
+       + `<span class="chip-main" data-act="chip-toggle" data-pid="${esc(p.id)}" data-model="${esc(m)}" title="${tip}">` +
+         `${on ? "✓ " : "+ "}${esc(m)}${ctxBadge(p, m)}${speedBadge(p, m)}</span></span>`;
+}
+/* 星标汇总卡片（渠道页顶部）：集中管理，点 ✕ 取消 */
+function starListHtml() {
+  const c = cfg();
+  const rows = (c.stars || []).map(k => {
+    const i = String(k).indexOf("::");
+    const pid = i > 0 ? String(k).slice(0, i) : "";
+    const m = i > 0 ? String(k).slice(i + 2) : "";
+    const p = (c.providers || []).find(x => x.id === pid);
+    return m ? { pid: pid, model: m, name: p ? p.name : "（渠道已删除）" } : null;
+  }).filter(Boolean);
+  if (!rows.length) {
+    return `<div class="empty" style="padding:14px 0"><div class="hint">还没有星标模型 —— 在下面任意模型标签<b>左侧的 ☆</b> 点一下即可（星标会自动把该模型加入调度）</div></div>`;
+  }
+  return `<div class="chips" style="padding-top:2px">${rows.map(r => `
+    <span class="chip starred" style="display:inline-flex;cursor:default">
+      <span class="chip-star on" style="cursor:default">★</span>
+      <span style="padding:3.5px 4px 3.5px 6px">${esc(r.name)} · ${esc(r.model)}</span>
+      <button class="chip-x" data-act="star-toggle" data-pid="${esc(r.pid)}" data-model="${esc(r.model)}" title="取消星标">✕</button>
+    </span>`).join("")}</div>`;
 }
 function providerCard(p, tierIdx) {
   const expanded = S.expandedProviders.has(p.id);
@@ -447,12 +473,6 @@ function speedBadge(p, m) {
 /* 星标：无视冷却机制，每次请求最先调用 */
 function isStarred(p, m) {
   return ((cfg().stars) || []).includes(p.id + "::" + m);
-}
-function starBtn(p, m) {
-  const on = isStarred(p, m);
-  const tip = on ? "取消星标（当前：无视冷却，每次请求最先调用）"
-                 : "设为星标：无视冷却机制，每次请求都最先调用它，失败才回落到冷却池";
-  return `<button class="star ${on ? "on" : ""}" data-act="star-toggle" data-pid="${esc(p.id)}" data-model="${esc(m)}" title="${tip}">${on ? "★" : "☆"}</button>`;
 }
 /* 测速卡片底部的状态行 */
 function speedSummaryText() {
