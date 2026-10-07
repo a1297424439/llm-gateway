@@ -177,7 +177,12 @@ def _err_msg(text: str) -> str:
     return (text or "").strip()[:300] or "upstream error"
 
 
-def raise_for_status(status: int, text: str, headers: Optional[httpx.Headers] = None) -> None:
+def raise_for_status(status: int, text: str, headers: Optional[httpx.Headers] = None,
+                     p: Optional[dict] = None, model: Optional[str] = None) -> None:
+    # 思考参数自愈：上游拒绝我们的思考参数（词表/字段不认）→ 记下该渠道+模型，
+    # 后续请求不再注入，避免每次都白撞一个 400。（调用方传了 p/model 才生效）
+    if status == 400 and is_think_rejection(text):
+        note_think_rejection(p, model)
     retry_after: Optional[float] = None
     if headers:
         try:
@@ -274,6 +279,54 @@ def _looks_reasoning(model: str) -> bool:
     return any(h in m for h in _REASONING_HINTS)
 
 
+# ---- 思考参数自愈：上游不认我们的思考参数时，记住「渠道+模型」不再注入 ----
+# 各上游对 reasoning_effort 的取值词表并不一致（OpenAI：low/medium/high；
+# 部分中转站的 qwen3.8 只认 xhigh/medium/low），发错值会硬 400：
+#   HTTP 400: Unexpected reasoning effort high. Supported types are xhigh (default), medium, and low.
+#   HTTP 400: "thinking" is not supported on /v1/chat/completions ... Use "reasoning_effort"
+# 与其逐一猜词表（猜错一次就白撞一次），不如让上游自己教我们：一旦命中这类 400，
+# 就记下该 (渠道, 模型)，之后不再给它注入思考参数——回复照常，只是不再调强度。
+_THINK_REJECTED: set = set()
+_THINK_REJECT_HINTS = (
+    "is not supported on /v1/chat/completions",
+    "unexpected reasoning effort",
+    "reasoning effort",
+    "reasoning_effort",
+    "thinking is not supported",
+)
+
+
+def is_think_rejection(text: str) -> bool:
+    """上游报错是否是「思考参数 / 取值不被支持」。"""
+    t = (text or "").lower()
+    if not t or ("reasoning" not in t and "thinking" not in t):
+        return False
+    return any(h in t for h in _THINK_REJECT_HINTS)
+
+
+def _think_key(p: Optional[dict], model: str):
+    if not p or not model:
+        return None
+    return (str(p.get("id") or p.get("name") or ""), str(model))
+
+
+def note_think_rejection(p: Optional[dict], model: str) -> None:
+    """记住「这个渠道 + 这个模型」不吃我们的思考参数，后续不再注入。"""
+    k = _think_key(p, model)
+    if k:
+        _THINK_REJECTED.add(k)
+
+
+def think_rejected(p: Optional[dict], model: str) -> bool:
+    k = _think_key(p, model)
+    return bool(k and k in _THINK_REJECTED)
+
+
+def reset_think_rejections() -> None:
+    """渠道模型刷新后清空（模型词表可能变了）。"""
+    _THINK_REJECTED.clear()
+
+
 def _apply_thinking(payload: dict, p: dict, model: str) -> None:
     """把统一思考强度写进 OpenAI 兼容请求体（不同厂商思考参数名不一致，这里归一）。
 
@@ -284,6 +337,8 @@ def _apply_thinking(payload: dict, p: dict, model: str) -> None:
     - level="auto" → 不注入（交给上游默认）
     """
     mt = (p.get("model_thinking") or {})
+    if think_rejected(p, model):
+        return  # 这个渠道+模型曾因思考参数被上游 400，此后不再注入（自愈）
     explicit = mt.get(model)
     if explicit is None and "*" in mt:
         explicit = mt.get("*")

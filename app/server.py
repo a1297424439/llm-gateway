@@ -752,7 +752,7 @@ async def v1_messages(req: Request, _=Depends(gateway_auth)):
         try:
             r = await _cli.send(hreq)
             if r.status_code != 200:
-                adapters.raise_for_status(r.status_code, r.text, r.headers)
+                adapters.raise_for_status(r.status_code, r.text, r.headers, cand.provider, cand.model)
             if stream:
                 # 先探首个数据块：部分上游用 HTTP 200 + 正文返回「额度耗尽通知」（假成功），
                 # 必须在返回给客户端之前识别，否则会被当成功、继续用这个没额度的渠道。
@@ -1080,7 +1080,7 @@ async def _attempt_json(cfg: dict, cand, body: dict, endpoint: str = "chat", usa
 
         if r.status_code != 200:
 
-            adapters.raise_for_status(r.status_code, r.text, r.headers)
+            adapters.raise_for_status(r.status_code, r.text, r.headers, p, cand.model)
 
         try:
 
@@ -1166,7 +1166,7 @@ async def _attempt_stream(cfg: dict, cand, body: dict, ms=None):
 
             await r.aclose()
 
-            adapters.raise_for_status(r.status_code, text, r.headers)
+            adapters.raise_for_status(r.status_code, text, r.headers, p, cand.model)
 
 
 
@@ -1477,7 +1477,7 @@ async def privacy_discover(req: Request, _=Depends(api_auth)):
 
         if r.status_code != 200:
 
-            adapters.raise_for_status(r.status_code, r.text, r.headers)
+            adapters.raise_for_status(r.status_code, r.text, r.headers, prov, model)
 
         data = r.json()
 
