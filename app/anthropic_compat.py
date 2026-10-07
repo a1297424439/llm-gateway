@@ -186,6 +186,7 @@ class StreamToAnthropic:
         self.blocks = []      # 已打开的内容块 [{idx, kind, tool_id?, openai_idx?}]
         self.next_idx = 0
         self.tool_ids = {}    # openai 工具下标 -> anthropic tool id
+        self.tool_idx = {}    # openai 工具下标 -> 已打开的块 index（arguments 增量靠它定位）
         self.stop_reason = None
         self.usage_in = 0
         self.usage_out = 0
@@ -193,7 +194,7 @@ class StreamToAnthropic:
     def _ev(self, event: str, data: dict) -> str:
         return f"event: {event}\ndata: " + json.dumps(data, ensure_ascii=False) + "\n\n"
 
-    def _open_block(self, kind: str, tool_id=None, tool_name=None):
+    def _open_block(self, kind: str, tool_id=None, tool_name=None, openai_idx=None):
         """打开（或复用）内容块，返回 (index, content_block_start 事件)。"""
         if kind in ("text", "thinking"):
             for b in self.blocks:
@@ -206,6 +207,7 @@ class StreamToAnthropic:
             tid = tool_id or _now_id("toolu")
             b["tool_id"] = tid
             b["tool_name"] = tool_name or ""
+            b["openai_idx"] = openai_idx   # 必须存：arguments 增量靠它反查块 index
         self.blocks.append(b)
         cb = {"type": kind}
         if kind == "tool":
@@ -259,15 +261,20 @@ class StreamToAnthropic:
 
         for tc in delta.get("tool_calls") or []:
             ti = tc.get("index", 0)
-            if ti not in self.tool_ids:
+            tidx = self.tool_idx.get(ti)
+            if tidx is None:
                 self.tool_ids[ti] = _now_id("toolu")
                 fn_name = ((tc.get("function") or {}).get("name")) or ""
-                idx, start = self._open_block("tool", tool_id=self.tool_ids[ti], tool_name=fn_name)
-                evs.append(start)
+                tidx, start = self._open_block("tool", tool_id=self.tool_ids[ti],
+                                               tool_name=fn_name, openai_idx=ti)
+                self.tool_idx[ti] = tidx
+                if start:
+                    evs.append(start)
             args = (tc.get("function") or {}).get("arguments")
             if args:
-                tidx = next(b["idx"] for b in self.blocks
-                            if b["kind"] == "tool" and b.get("openai_idx") == ti)
+                # ⚠️ 旧代码用 next(b["idx"] for b in self.blocks if ... b.get("openai_idx") == ti)
+                # 但 _open_block 从没写过 openai_idx → StopIteration → 流式工具调用一出现参数整条流就断
+                # （zcode「一直调用工具失败」的根因）。改用 self.tool_idx 直接映射。
                 evs.append(self._ev("content_block_delta", {
                     "type": "content_block_delta", "index": tidx,
                     "delta": {"type": "input_json_delta", "partial_json": args}}))
