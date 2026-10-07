@@ -307,15 +307,16 @@ def _apply_thinking(payload: dict, p: dict, model: str) -> None:
     if vendor in ("deepseek", "qwen", "glm", "kimi", "openai", "anthropic"):
         # 注意：本函数只服务 OpenAI 兼容路径（真 anthropic 原生渠道走 build_anthropic_payload），
         # 所以 claude 模型经中转站 OpenAI 接口调用时同样用 reasoning_effort。
-        if level == "off":
-            payload["reasoning_effort"] = "none"
-            payload["thinking"] = {"type": "disabled"}  # qwen 兼容
-        else:
-            payload["reasoning_effort"] = effort
-        # qwen/deepseek 额外带 thinking 显式开关
-        if vendor in ("qwen", "deepseek"):
-            payload["thinking"] = {"type": "enabled", "effort": effort} if level != "off" \
-                else {"type": "disabled"}
+        #
+        # ⚠️ 这条路径上绝不要加 "thinking" 字段（v1.0.26~v1.0.29 的 bug，2026-10 修）：
+        # thinking 是 Anthropic 专有方言，OpenAI 兼容上游会直接 400 拒绝——
+        #   HTTP 400: "thinking" is not supported on /v1/chat/completions and was not applied.
+        #             Use "reasoning_effort" (or "xxx.effort") to control thinking. (sharellm.net)
+        # 旧代码在 qwen/deepseek 上额外塞 thinking={"type":"enabled","effort":...}，
+        # 导致这两个厂商的模型每次请求白撞一次 400 再故障转移（迷你机实测 9 次，
+        # zcode 侧表现为"网关工作不正常"）。统一强度只用 reasoning_effort：
+        # openai/qwen/glm/kimi/deepseek 都认，off 档 → "none"。
+        payload["reasoning_effort"] = effort
     else:
         # gemini 等：不强塞 reasoning_effort，交给上游
         pass
