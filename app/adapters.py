@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from typing import AsyncGenerator, List, Optional, Tuple
 
@@ -177,12 +178,201 @@ def _err_msg(text: str) -> str:
     return (text or "").strip()[:300] or "upstream error"
 
 
+# ---- 客户端可见错误文本的中性化（v2.0.1） ----
+# 背景（2026-10 实测）：dsh(deepseek-harness) 的 llm-pi-ai 适配器是**按错误文本正则判错误码**的：
+#   /\b400\b|invalid.?request/i          ⇒ INVALID_REQUEST（**不可重试**，直接掐掉整个 turn）
+#   /\b413\b|payload too large|.../i     ⇒ INVALID_REQUEST
+#   /\b5\d\d\b/                          ⇒ SERVER    （可重试）
+#   /timeout/                            ⇒ TIMEOUT   （可重试）
+#   /stream ended (before|without)/       ⇒ TRANSPORT （可重试）
+# 而 pi-ai 会把上游响应体原样拼进 errorMessage —— 于是我们「所有候选都失败」的 502 里只要带上
+# 上游某次尝试的 "HTTP 400: ..."（或 details 里的 status: 400），客户端就会把这次
+# **本可重试的服务端故障**误判成「请求非法」而放弃重试，表现为「网关看着都成功、客户端大量失败」。
+# 所以：凡是发给客户端（含流里的错误帧）的上游文本，一律把 4xx 字样中性化；原始文本只留在网关日志里。
+_4XX_RE = re.compile(r"\b4\d{2}\b")
+_CLIENT_TEXT_RULES = (
+    # 注意不要用 \brequest\b：上游常写 "invalid_request_error"，下划线是词字符，边界匹配会漏改。
+    (re.compile(r"(?i)invalid[ _-]?request"), "rejected request"),
+    (re.compile(r"(?i)\bpayload too large\b"), "body rejected by upstream"),
+    (re.compile(r"(?i)\brequest body too large\b"), "body rejected by upstream"),
+    (re.compile(r"(?i)\blength limit exceeded\b"), "body rejected by upstream"),
+    (re.compile(r"(?i)\bfailed to buffer the request body\b"), "body rejected by upstream"),
+)
+
+
+def sanitize_client_text(text: str) -> str:
+    """把上游文本里会被客户端「按文本判码」误判的 4xx 字样中性化（5xx/timeout 保留，那是可重试的）。"""
+    t = str(text or "")
+    if not t:
+        return t
+    t = _4XX_RE.sub("client error", t)
+    for rx, rep in _CLIENT_TEXT_RULES:
+        t = rx.sub(rep, t)
+    return t
+
+
+def client_error_frame(message: str, detail_raw: str = "") -> str:
+    """构造给客户端的 SSE 错误帧。
+
+    两个要求（v2.0.1，实测自 dsh/deepseek-harness 的 llm-pi-ai 判码规则）：
+      1) 文案里显式带 5xx（这里是 502）→ 客户端按 SERVER 处理，会重试；
+      2) 上游原文只作为**已中性化**的附注（JSON 感知地替换 4xx 字样），不出现裸 "400"。
+    """
+    msg = sanitize_client_text(message)
+    if detail_raw:
+        msg = msg + "：上游返回（已中性化）" + sanitize_error_payload(detail_raw)[:400]
+    return json.dumps({"error": {"message": msg, "type": "upstream_error"}}, ensure_ascii=False)
+
+
+def sanitize_error_payload(payload: str) -> str:
+    """中性化一段错误 JSON（保持合法 JSON）：字符串值走 sanitize_client_text，
+    4xx 的数字字段（如 "code": 400 / "status": 400）也一并中性化，否则文本里仍留着 400。"""
+    s = str(payload or "")
+    try:
+        j = json.loads(s)
+    except Exception:
+        return sanitize_client_text(s)
+
+    def walk(x):
+        if isinstance(x, str):
+            return sanitize_client_text(x)
+        if isinstance(x, bool):
+            return x
+        if isinstance(x, int):
+            return "client error" if 400 <= x < 500 else x
+        if isinstance(x, dict):
+            return {k: walk(v) for k, v in x.items()}
+        if isinstance(x, list):
+            return [walk(v) for v in x]
+        return x
+
+    try:
+        return json.dumps(walk(j), ensure_ascii=False)
+    except Exception:
+        return sanitize_client_text(s)
+
+
+# ---- 思考强度词表学习：上游 400 里给了「Supported types are ...」就照着改，并持久化 ----
+_EFFORT_RANK = ("none", "minimal", "low", "medium", "high", "xhigh")
+_SUPPORTED_RE = re.compile(r"(?i)supported\s+(?:types?|values?|efforts?)(?:\s+are)?\s*:?\s*([^.\n]*)")
+_EFFORT_TOKEN_RE = re.compile(r"\b(xhigh|high|medium|low|minimal|none)\b", re.I)
+
+
+def parse_supported_efforts(text: str) -> list:
+    """从 400 文案里解析上游支持的 reasoning_effort 词表。
+    例：'Unexpected reasoning effort high. Supported types are xhigh (default), medium, and low.'"""
+    m = _SUPPORTED_RE.search(str(text or ""))
+    if not m:
+        return []
+    out = []
+    for tok in _EFFORT_TOKEN_RE.findall(m.group(1)):
+        t = tok.lower()
+        if t not in out:
+            out.append(t)
+    return out
+
+
+def map_effort_to_vocab(want: str, vocab) -> str:
+    """把想要的 effort 映射到上游词表里最接近的合法值（优先向上取，强度不低于想要）。"""
+    w = str(want or "").lower()
+    vocab = [str(v).lower() for v in (vocab or []) if v]
+    if not vocab:
+        return ""
+    if w in vocab:
+        return w
+
+    def rk(v):
+        try:
+            return _EFFORT_RANK.index(v)
+        except ValueError:
+            return -1
+
+    wr = rk(w)
+    if wr < 0:
+        return ""
+    up = [v for v in vocab if rk(v) >= wr]
+    if up:
+        return min(up, key=rk)
+    return max(vocab, key=rk)
+
+
+def _effort_target_level(p: Optional[dict], model: str) -> str:
+    """这次请求「想要」的思考强度档（用户显式配置优先，否则默认 max）。"""
+    mt = (p or {}).get("model_thinking") or {}
+    lvl = None
+    if model and model in mt:
+        lvl = mt.get(model)
+    elif "*" in mt:
+        lvl = mt.get("*")
+    lvl = str(lvl or "max")
+    return lvl if lvl in _THINK_LEVELS else "max"
+
+
+def _remember_effort(p: Optional[dict], model: str, effort: str) -> bool:
+    """把学到的 effort 写进 state（持久化）。"""
+    pid = str((p or {}).get("id") or (p or {}).get("name") or "")
+    if not pid or not model or not effort:
+        return False
+    try:
+        from . import state as state_mod
+        state_mod.set_think_effort(pid, model, effort)
+        return True
+    except Exception:
+        return False
+
+
+def learned_effort(p: Optional[dict], model: str) -> str:
+    """取该渠道+模型学到的 effort 覆盖值（没有则空串）。"""
+    pid = str((p or {}).get("id") or (p or {}).get("name") or "")
+    if not pid or not model:
+        return ""
+    try:
+        from . import state as state_mod
+        return state_mod.think_effort_of(pid, model)
+    except Exception:
+        return ""
+
+
+def learn_effort_from_error(p: Optional[dict], model: str, text: str) -> str:
+    """上游 400 里给了支持词表 → 推出我们该用的值、持久化，返回学到的值（学不到返回空串）。"""
+    vocab = parse_supported_efforts(text)
+    if not vocab:
+        return ""
+    want = _THINK_TO_EFFORT.get(_effort_target_level(p, model)) or "high"
+    got = map_effort_to_vocab(want, vocab)
+    if not got:
+        return ""
+    if _remember_effort(p, model, got):
+        return got
+    return got
+
+
+def _history_missing_reasoning(messages) -> bool:
+    """历史里有 assistant 消息、但一条都没带 reasoning_content。
+
+    DeepSeek 系 thinking 模式要求：历史里的 assistant 消息必须回传 reasoning_content，
+    否则硬 400「The reasoning_content in the thinking mode must be passed back to the API.」。
+    多模型混跑（auto 路由）最容易踩：不同步骤由不同模型作答，部分回答没有思考内容。
+    此时这一请求就不要再开思考（不注入 reasoning_effort），让请求正常走完。
+    """
+    saw_assistant = False
+    for m in (messages or []):
+        if not isinstance(m, dict) or str(m.get("role")) != "assistant":
+            continue
+        saw_assistant = True
+        if str(m.get("reasoning_content") or "").strip():
+            return False
+    return saw_assistant
+
+
 def raise_for_status(status: int, text: str, headers: Optional[httpx.Headers] = None,
                      p: Optional[dict] = None, model: Optional[str] = None) -> None:
-    # 思考参数自愈：上游拒绝我们的思考参数（词表/字段不认）→ 记下该渠道+模型，
-    # 后续请求不再注入，避免每次都白撞一个 400。（调用方传了 p/model 才生效）
+    # 思考参数自愈：上游拒绝我们的思考参数（词表/字段不认）→ 两件事
+    #   1) 若报错里带「Supported types are ...」→ 学到该渠道+模型认的值，之后按对的值发（持久化）
+    #   2) 学不到就直接记下该渠道+模型，后续不再注入，避免每次都白撞一个 400
     if status == 400 and is_think_rejection(text):
-        note_think_rejection(p, model)
+        if not learn_effort_from_error(p, model, text):
+            note_think_rejection(p, model)
     retry_after: Optional[float] = None
     if headers:
         try:
@@ -368,10 +558,18 @@ def _apply_thinking(payload: dict, p: dict, model: str) -> None:
         #   HTTP 400: "thinking" is not supported on /v1/chat/completions and was not applied.
         #             Use "reasoning_effort" (or "xxx.effort") to control thinking. (sharellm.net)
         # 旧代码在 qwen/deepseek 上额外塞 thinking={"type":"enabled","effort":...}，
-        # 导致这两个厂商的模型每次请求白撞一次 400 再故障转移（迷你机实测 9 次，
-        # zcode 侧表现为"网关工作不正常"）。统一强度只用 reasoning_effort：
+        # 导致这两个厂商的模型每次请求白撞一次 400 再故障转移。统一强度只用 reasoning_effort：
         # openai/qwen/glm/kimi/deepseek 都认，off 档 → "none"。
-        payload["reasoning_effort"] = effort
+        #
+        # DeepSeek 系 thinking 模式：历史里有 assistant 消息却没有一条 reasoning_content 时，
+        # 开思考会被硬 400「The reasoning_content in the thinking mode must be passed back」——
+        # 多模型混跑（auto 路由，各步由不同模型作答）最容易踩。这一请求就不开思考。
+        if vendor == "deepseek" and _history_missing_reasoning(payload.get("messages")):
+            return
+        # 曾学到该渠道+模型认的取值（如 qwen3.8 只认 xhigh/medium/low）就按学到的发，
+        # 学到的值已持久化在 state.think_effort，重启后依然生效；没学过用标准值。
+        _eff = effort if level == "off" else (learned_effort(p, model) or effort)
+        payload["reasoning_effort"] = _eff
     else:
         # gemini 等：不强塞 reasoning_effort，交给上游
         pass

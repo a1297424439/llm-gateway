@@ -213,6 +213,56 @@ def _ask_close_native(window, srv, tray_icon) -> str:
     return act
 
 
+def _cleanup_orphan_webviews(name: str = "msedgewebview2.exe",
+                             data_glob: str = "*\\Temp\\tmp*\\EBWebView*") -> int:
+    """清理「孤儿」WebView2 进程（返回清理个数）。
+
+    症状：窗口能起来，但客户区只有 background_color 的黑底、页面永远不渲染
+    （pywebview 报 `WebView2 initialization failed (0x8007139F)`）。
+    原因：kill -Force 掉网关时，它拉起的 msedgewebview2 子进程会活下来，仍占着
+    pywebview 的临时用户数据目录（%TEMP%\\tmpXXXX\\EBWebView），新实例建
+    CoreWebView2Controller 时状态非法（ERROR_INVALID_STATE）。
+
+    安全策略（关键）：只清理**祖先里已经没有存活 llm-gateway 进程**的那种残留，
+    正在运行的网关自己的 webview 一律不动；user-data-dir 不匹配 pywebview 临时目录的
+    也一律不动（QQ / 微信 / Clash 等其它软件的 WebView2 不受影响）。
+    name / data_glob 参数只为自测可注入，正常运行用默认值。
+    """
+    if os.name != "nt":
+        return 0
+    try:
+        import subprocess
+        _ps = (
+            "$gw = @(Get-CimInstance Win32_Process -Filter \"Name='llm-gateway.exe'\" "
+            "-ErrorAction SilentlyContinue | ForEach-Object { [int]$_.ProcessId });"
+            "$parent = @{};"
+            "Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | "
+            "ForEach-Object { $parent[[int]$_.ProcessId] = [int]$_.ParentProcessId };"
+            "$victims = @();"
+            "foreach ($p in (Get-CimInstance Win32_Process -Filter \"Name='" + name + "'\" "
+            "-ErrorAction SilentlyContinue)) {"
+            "  $cl = [string]$p.CommandLine;"
+            "  if ($cl -notlike '" + data_glob + "') { continue }"
+            "  $cur = [int]$p.ParentProcessId; $live = $false; $guard = 0;"
+            "  while ($cur -gt 0 -and $guard -lt 12) {"
+            "    if ($gw -contains $cur) { $live = $true; break }"
+            "    $nxt = $parent[$cur]; if (-not $nxt) { break }; $cur = [int]$nxt; $guard++"
+            "  }"
+            "  if (-not $live) { $victims += [int]$p.ProcessId }"
+            "};"
+            "foreach ($v in $victims) { Stop-Process -Id $v -Force -ErrorAction SilentlyContinue };"
+            "$victims -join ' '"
+        )
+        out = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", _ps],
+                             capture_output=True, text=True, timeout=25)
+        ids = [x for x in (out.stdout or "").split() if x.strip().isdigit()]
+        if ids:
+            time.sleep(0.6)   # 让系统回收句柄
+        return len(ids)
+    except Exception:
+        return 0
+
+
 def main() -> None:
     multiprocessing.freeze_support()
 
@@ -386,6 +436,10 @@ def main() -> None:
         return
 
     import webview
+
+    _n = _cleanup_orphan_webviews()
+    if _n:
+        print(f"[i] 已清理 {_n} 个残留 WebView2 进程（否则面板可能只显示黑屏）")
 
     exiting = {"v": False}
     ui = {"tray_ok": False, "icon": None}

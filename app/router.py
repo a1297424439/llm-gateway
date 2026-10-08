@@ -103,7 +103,7 @@ def select(cfg: dict, requested: str) -> Selection:
             for i, m in enumerate(_ordered_models(p, speed_first)):
                 push(p, m, i + 1)
         if not cands and not starred:
-            return Selection(False, 503, "还没有勾选任何调度模型：请在渠道页点击模型标签勾选")
+            return Selection(False, 503, "还没有勾选任何调度模型（gateway server error 503）：请在渠道页点击模型标签勾选")
         return Selection(True, 200, "", "auto", starred + cands)
 
     for p in usable:

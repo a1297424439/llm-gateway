@@ -14,6 +14,7 @@ MUTEX = threading.Lock()
 LOGS: deque = deque(maxlen=500)
 USAGE: Dict[str, dict] = {}   # 按天累计 token 用量（热力图数据源），key = "YYYY-MM-DD"
 SPEED: Dict[str, dict] = {}   # 测速结果，key = "{provider_id}::{model}" → {ms, ok, status, ts}
+THINK_EFFORT: Dict[str, str] = {}   # 学到的思考强度词表覆盖，key = "{provider_id}::{model}" → 上游认的 effort 值
 POOL: Dict[str, dict] = {}   # key = "{provider_id}::{model}"  模型级冷却
 PPOOL: Dict[str, dict] = {}  # key = provider_id                  渠道级冷却（额度类错误）
 _dirty = False
@@ -155,6 +156,36 @@ def speed_snapshot() -> Dict[str, dict]:
     """全部测速结果快照（面板用）。"""
     with MUTEX:
         return {k: dict(v) for k, v in SPEED.items()}
+
+
+def set_think_effort(provider_id: str, model: str, effort: str) -> None:
+    """记住「这个渠道 + 这个模型」上游认的 reasoning_effort 取值（学习结果，持久化）。
+
+    上游词表不一致（OpenAI: low/medium/high；部分中转的 qwen3.8: xhigh/medium/low），
+    发错值会硬 400。学到之后写在这里，重启后依然生效，避免反复白撞 400。
+    """
+    global _dirty
+    pid = str(provider_id or "")
+    m = str(model or "")
+    e = str(effort or "").strip()
+    if not pid or not m or not e:
+        return
+    with MUTEX:
+        THINK_EFFORT[f"{pid}::{m}"] = e
+        if len(THINK_EFFORT) > 800:
+            for k in list(THINK_EFFORT)[:-800]:
+                THINK_EFFORT.pop(k, None)
+        _dirty = True
+
+
+def think_effort_of(provider_id: str, model: str) -> str:
+    """取该渠道+模型学到的 effort 覆盖值（没有则空串）。"""
+    pid = str(provider_id or "")
+    m = str(model or "")
+    if not pid or not m:
+        return ""
+    with MUTEX:
+        return str(THINK_EFFORT.get(f"{pid}::{m}") or "")
 
 
 def speed_of(provider_id: str, model: str) -> Optional[int]:
@@ -360,7 +391,8 @@ def persist() -> None:
     with MUTEX:
         data = {"logs": list(LOGS)[-500:], "pool": dict(POOL), "ppool": dict(PPOOL),
                 "usage": {k: dict(v) for k, v in sorted(USAGE.items())[-400:]},
-                "speed": {k: dict(v) for k, v in SPEED.items()}}
+                "speed": {k: dict(v) for k, v in SPEED.items()},
+                "think_effort": dict(THINK_EFFORT)}
     p = cfgmod.state_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_suffix(".tmp")
@@ -419,6 +451,9 @@ def load() -> None:
                 USAGE[str(k)] = {"p": int(v.get("p", 0) or 0), "c": int(v.get("c", 0) or 0),
                                  "n": int(v.get("n", 0) or 0), "ok": int(v.get("ok", 0) or 0),
                                  "fail": int(v.get("fail", 0) or 0)}
+        for k, v in (data.get("think_effort") or {}).items():
+            if isinstance(v, str) and v:
+                THINK_EFFORT[str(k)] = v
 
 
 def maybe_persist() -> None:

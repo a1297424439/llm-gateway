@@ -670,6 +670,12 @@ async def chat_completions(req: Request, _=Depends(gateway_auth)):
 
         return _gw_error(400, "缺少 messages 字段")
 
+    if not body.get("messages"):
+
+        # 空历史：以前会原样转发到上游，各渠道逐个拒绝（"field messages is required" /
+        # "Empty input messages"）要等好几秒才返回 502。直接本地快速拒绝，语义更清楚。
+        return _gw_error(400, "messages 不能为空：请求必须至少包含一条消息")
+
     cfg = cfgmod.cfg()
 
     sel = router_mod.select(cfg, str(body.get("model") or ""))
@@ -857,8 +863,14 @@ async def v1_messages(req: Request, _=Depends(gateway_auth)):
     state_mod.log_request(ok=False, ms=int((time.time() - t_start) * 1000), stream=stream,
                           alias=sel.alias, provider=None, model=str(body.get("model") or ""),
                           error="所有候选渠道均失败", attempts=attempts_log)
-    return JSONResponse(status_code=502,
-                        content=anthropic_compat.anthropic_error(502, "所有候选渠道均失败（已按档位依次尝试）：" + last_err))
+    # v2.0.1：同 OpenAI 路径——上游原文（含 "HTTP 400: ..."）只留在上面的日志里，
+    # 给客户端的文案做中性化，避免客户端按文本判码把可重试的 502 误判成"请求非法"。
+    return JSONResponse(
+        status_code=502,
+        content=anthropic_compat.anthropic_error(
+            502, "上游渠道暂不可用（gateway server error 502）：已按档位依次尝试，"
+                 "逐渠道失败原因见网关面板日志。最后一条："
+                 + adapters.sanitize_client_text(last_err)))
 
 
 
@@ -1064,9 +1076,14 @@ async def _execute(cfg: dict, sel, body: dict, stream: bool, endpoint: str = "ch
 
                           error="所有候选渠道均失败", attempts=attempts_log)
 
-    msg = "所有候选渠道均失败（按优先级依次尝试，失败渠道已进入冷却池）"
+    # v2.0.1：客户端可见的错误体**不再带逐渠道明细**。明细里有 "HTTP 400: ..." 和 status:400，
+    # 而 dsh(deepseek-harness) 是按错误文本正则判错码的——文本里出现 400 就被判成
+    # INVALID_REQUEST（不可重试），把这次本可重试的服务端故障变成"直接掐掉整个 turn"。
+    # 明细照旧写进上面的网关日志（state.json），文案里明确给出我们自己的 502。
+    msg = ("上游渠道暂不可用（gateway server error 502），已尝试 %d 个候选，"
+           "逐渠道失败原因见网关面板「日志」" % len(attempts_log))
 
-    return _gw_error(502, msg, extra=attempts_log)
+    return _gw_error(502, msg)
 
 
 
@@ -1262,7 +1279,16 @@ async def _attempt_stream(cfg: dict, cand, body: dict, ms=None):
 
                     if er:
 
-                        yield "data: " + er + "\n\n"
+                        # v2.0.1：上游在流里塞错误对象时，原文只写进网关日志；发给客户端的版本
+                        # 做中性化（文本里的 "HTTP 400: ..." 会让 dsh 判成不可重试的 INVALID_REQUEST）。
+                        state_mod.log_request(ok=False, ms=int((time.time() - t_start) * 1000), stream=True,
+                                              alias=sel.alias, provider=cand.provider.get("name"),
+                                              model=cand.model, error="上游流中返回错误",
+                                              attempts=[{"provider": cand.provider.get("name"), "model": cand.model,
+                                                         "status": "stream", "error": str(er)[:200]}])
+
+                        yield "data: " + adapters.client_error_frame(
+                            "上游流中返回错误（gateway server error 502）", er) + "\n\n"
 
                         yield "data: [DONE]\n\n"
 
@@ -1280,9 +1306,15 @@ async def _attempt_stream(cfg: dict, cand, body: dict, ms=None):
 
             except httpx.HTTPError as e:
 
-                msg = json.dumps({"error": {"message": f"流中断: {e}", "type": "upstream_error"}},
+                # 流中断：客户端可见文案中性化 + 明确 502（可重试的 server error），原始异常进日志。
+                state_mod.log_request(ok=False, ms=int((time.time() - t_start) * 1000), stream=True,
+                                      alias=sel.alias, provider=cand.provider.get("name"),
+                                      model=cand.model, error="上游流中断",
+                                      attempts=[{"provider": cand.provider.get("name"), "model": cand.model,
+                                                 "status": "stream", "error": ("流中断: " + str(e))[:200]}])
 
-                                 ensure_ascii=False)
+                msg = json.dumps({"error": {"message": "上游流中断（gateway server error 502），详情见网关日志",
+                                            "type": "upstream_error"}}, ensure_ascii=False)
 
                 yield "data: " + msg + "\n\n"
 
